@@ -1,0 +1,141 @@
+# ---------------------------------------------------------------------------
+# Borda de produção: TLS, compressão, cabeçalhos de segurança e roteamento.
+#
+# Substitui o nginx quando a plataforma sai da rede local. O nginx continua
+# valendo para o `docker compose up` caseiro — lá não há domínio nem
+# certificado a emitir.
+# ---------------------------------------------------------------------------
+{
+	email {$BOLAO_ACME_EMAIL}
+
+	# Fecha o painel de administração do próprio Caddy. Ele escuta em
+	# localhost:2019 por padrão e permite reconfigurar o servidor inteiro;
+	# num container isso é uma superfície que não precisa existir.
+	admin off
+
+	servers {
+		# O IP de quem acessa chega no cabeçalho, porque há um proxy antes
+		# (Cloudflare). Sem isto o log e o limite de taxa veriam o IP da
+		# Cloudflare e tratariam a internet inteira como um visitante só.
+		trusted_proxies cloudflare {
+			interval 12h
+		}
+		client_ip_headers CF-Connecting-IP X-Forwarded-For
+	}
+}
+
+{$BOLAO_DOMINIO} {
+	tls {
+		dns cloudflare {$CLOUDFLARE_API_TOKEN}
+		# Resolvedores públicos: dentro do container o DNS é o do Docker, que
+		# não enxerga a propagação do registro TXT do desafio.
+		resolvers 1.1.1.1 1.0.0.1
+	}
+
+	encode zstd gzip
+
+	header {
+		# Um ano, e o navegador passa a recusar http:// sozinho neste domínio.
+		# Só é seguro porque o certificado é emitido antes de a borda começar a
+		# servir: se o Caddy não conseguir o certificado, ele não sobe, e
+		# ninguém chega a receber este cabeçalho.
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Cross-Origin-Opener-Policy "same-origin"
+
+		# `microphone=(self)` é proposital: o gravador de áudio do relato de
+		# bug depende dele. Fora isso, nada.
+		Permissions-Policy "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), payment=(), usb=(), microphone=(self)"
+
+		# `blob:` cobre os anexos de relato, que a tela busca autenticados e
+		# exibe por URL local. `data:` cobre os escudos embutidos.
+		# `'unsafe-inline'` em script é o preço do SSR do Nuxt, que injeta o
+		# estado de hidratação inline; o resto fica fechado.
+		Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; media-src 'self' blob:; font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+
+		-Server
+	}
+
+	# --- Fluxo de eventos, se um dia existir (SSE) -------------------------
+	# Hoje o placar ao vivo é buscado de tempos em tempos pela tela, e não há
+	# endpoint sob /api/stream/. O bloco fica porque a diferença que ele faz —
+	# desligar o buffer e esticar o tempo limite — é invisível até o dia em que
+	# faltaria, e aí o evento chega tarde sem ninguém entender por quê.
+	# Precisa vir antes de /api/*: o Caddy casa por especificidade.
+	handle /api/stream/* {
+		uri strip_prefix /api
+		reverse_proxy api:8000 {
+			# `{client_ip}` sai do `trusted_proxies` acima: é o primeiro endereço
+			# da cadeia que NÃO é proxy confiável — o visitante de verdade.
+			#
+			# `header_up` SUBSTITUI, e é isso que importa. Por padrão o Caddy
+			# ANEXA ao X-Forwarded-For que chegou, então o valor que o cliente
+			# inventou fica na frente do real. O limite de taxa lê esse
+			# cabeçalho: sem substituir, `curl -H 'X-Forwarded-For: 1.2.3.4'`
+			# cria um balde novo por requisição e o teto vira enfeite.
+			header_up X-Real-IP {client_ip}
+			header_up X-Forwarded-For {client_ip}
+
+			flush_interval -1
+			transport http {
+				read_timeout 1h
+				keepalive 2m
+			}
+		}
+	}
+
+	# --- API ---------------------------------------------------------------
+	handle /api/* {
+		uri strip_prefix /api
+		reverse_proxy api:8000 {
+			# `{client_ip}` sai do `trusted_proxies` acima: é o primeiro endereço
+			# da cadeia que NÃO é proxy confiável — o visitante de verdade.
+			#
+			# `header_up` SUBSTITUI, e é isso que importa. Por padrão o Caddy
+			# ANEXA ao X-Forwarded-For que chegou, então o valor que o cliente
+			# inventou fica na frente do real. O limite de taxa lê esse
+			# cabeçalho: sem substituir, `curl -H 'X-Forwarded-For: 1.2.3.4'`
+			# cria um balde novo por requisição e o teto vira enfeite.
+			header_up X-Real-IP {client_ip}
+			header_up X-Forwarded-For {client_ip}
+
+			transport http {
+				# A importação de um campeonato faz dezenas de requisições
+				# espaçadas à fonte e passa de um minuto.
+				read_timeout 180s
+				keepalive 2m
+				keepalive_idle_conns 32
+			}
+		}
+	}
+
+	# --- Frontend (Nuxt SSR) -----------------------------------------------
+	handle {
+		reverse_proxy web:3000 {
+			# `{client_ip}` sai do `trusted_proxies` acima: é o primeiro endereço
+			# da cadeia que NÃO é proxy confiável — o visitante de verdade.
+			#
+			# `header_up` SUBSTITUI, e é isso que importa. Por padrão o Caddy
+			# ANEXA ao X-Forwarded-For que chegou, então o valor que o cliente
+			# inventou fica na frente do real. O limite de taxa lê esse
+			# cabeçalho: sem substituir, `curl -H 'X-Forwarded-For: 1.2.3.4'`
+			# cria um balde novo por requisição e o teto vira enfeite.
+			header_up X-Real-IP {client_ip}
+			header_up X-Forwarded-For {client_ip}
+
+			transport http {
+				keepalive 2m
+				keepalive_idle_conns 32
+			}
+		}
+	}
+
+	log {
+		output stdout
+		format console
+		level INFO
+	}
+}

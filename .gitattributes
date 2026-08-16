@@ -1,0 +1,24 @@
+# LF em tudo. O projeto é desenvolvido no Windows mas roda em containers
+# Linux: um arquivo com CRLF que vire entrypoint ou script de shell falha com
+# "bad interpreter: no such file or directory", e o erro não é óbvio.
+* text=auto eol=lf
+
+# Arquivos que precisam de CRLF no Windows.
+*.ps1  text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# Binários — nunca normalizar.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.svgz binary
+*.woff binary
+*.woff2 binary
+*.pdf  binary
+
+# Lockfiles: diff enorme e sem valor em revisão.
+package-lock.json -diff linguist-generated

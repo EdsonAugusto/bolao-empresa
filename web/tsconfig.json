@@ -1,0 +1,13 @@
+{
+  // O Nuxt gera .nuxt/tsconfig.json com os paths, os auto-imports e a lista de
+  // arquivos. Não sobrescreva `include`/`exclude` aqui: isso derruba as
+  // declarações de auto-import e o typecheck passa a acusar `useHead` e
+  // companhia como nomes inexistentes.
+  "extends": "./.nuxt/tsconfig.json",
+  "compilerOptions": {
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "types": ["node"]
+  }
+}

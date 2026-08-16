@@ -1,0 +1,212 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  # Precisa acompanhar a major do node:<x>-alpine no web/Dockerfile: majors
+  # diferentes de npm resolvem árvores diferentes e o `npm ci` quebra.
+  NODE_VERSION: "24"
+
+jobs:
+  api:
+    name: API — lint, typecheck, testes
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: bolao
+          POSTGRES_PASSWORD: bolao_ci_password
+          POSTGRES_DB: bolao
+          TZ: UTC
+          PGTZ: UTC
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U bolao"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      ENVIRONMENT: test
+      POSTGRES_USER: bolao
+      POSTGRES_PASSWORD: bolao_ci_password
+      POSTGRES_DB: bolao
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: "5432"
+      REDIS_HOST: localhost
+      REDIS_PORT: "6379"
+      SECRET_KEY: chave-de-ci-nao-usada-em-producao
+
+    defaults:
+      run:
+        working-directory: api
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: api/pyproject.toml
+
+      - name: Instalar dependências
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: ruff check
+        run: ruff check app tests
+
+      - name: ruff format
+        run: ruff format --check app tests
+
+      - name: mypy (scoring + services em strict)
+        run: mypy app/scoring app/services
+
+      - name: Migrations aplicam e revertem
+        run: |
+          alembic upgrade head
+          alembic downgrade base
+          alembic upgrade head
+
+      - name: pytest
+        run: pytest --cov=app --cov-report=term-missing --cov-report=xml
+
+      - name: Guardar cobertura
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-api
+          path: api/coverage.xml
+          if-no-files-found: ignore
+
+  web:
+    name: Web — lint, typecheck, testes, build
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: web
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Instalar dependências
+        # `ci` e não `install`: falha se o lockfile estiver fora de sincronia,
+        # em vez de silenciosamente resolver outra árvore que a do Dockerfile.
+        run: npm ci --no-audit --no-fund
+
+      - name: eslint
+        run: npm run lint
+
+      - name: typecheck
+        run: npm run typecheck
+
+      - name: vitest
+        run: npm run test
+
+      - name: build
+        run: npm run build
+
+  compose:
+    name: Stack sobe do zero
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preparar .env
+        run: cp .env.example .env
+
+      - name: docker compose up
+        run: docker compose up -d --build --wait --wait-timeout 600
+
+      - name: Migrations
+        run: docker compose exec -T api alembic upgrade head
+
+      - name: Seed
+        run: docker compose exec -T api python -m app.cli seed
+
+      - name: Conectividade
+        run: docker compose exec -T api python -m app.cli check
+
+      - name: API responde pelo nginx
+        run: |
+          curl --fail --silent --show-error --retry 12 --retry-delay 5 \
+            --retry-all-errors http://localhost:8080/api/health/ready
+
+      - name: Logs em caso de falha
+        if: failure()
+        run: docker compose logs --tail=200
+
+      - name: Derrubar
+        if: always()
+        run: docker compose down -v
+
+  deploy:
+    name: Implantação — scripts e imagens de produção
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck nos scripts do servidor
+        run: shellcheck instalar.sh atualizar.sh backup.sh
+
+      - name: Scripts são executáveis
+        run: |
+          for arquivo in instalar.sh atualizar.sh backup.sh; do
+            test -x "$arquivo" || { echo "$arquivo não está executável"; exit 1; }
+          done
+
+      - name: Compose de produção não expõe banco nem monta código
+        run: python3 infra/ci/conferir_producao.py
+
+      - name: Imagem do Caddy traz os dois módulos da Cloudflare
+        run: |
+          docker build -t bolao-caddy:ci ./infra/caddy
+          for modulo in dns.providers.cloudflare http.ip_sources.cloudflare; do
+            docker run --rm bolao-caddy:ci caddy list-modules | grep -q "$modulo"               || { echo "faltou $modulo"; exit 1; }
+          done
+
+      - name: Caddyfile adapta sem erro
+        run: |
+          docker run --rm             -v "$PWD/infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro"             -e BOLAO_DOMINIO=exemplo.test             -e BOLAO_ACME_EMAIL=ci@exemplo.test             -e CLOUDFLARE_API_TOKEN=token-de-ci             bolao-caddy:ci caddy adapt --config /etc/caddy/Caddyfile > /dev/null
+
+      - name: Imagem da API grava anexo sem privilégio
+        run: |
+          docker build -t bolao-api:ci --target prod ./api
+          docker run --rm bolao-api:ci sh -c             'test "$(id -un)" = appuser && touch /data/uploads/ci && echo ok'
+
+      # Só os arquivos que o gerador produz. `web/public/` inteiro pegaria o
+      # service worker e a tela offline, que são escritos à mão.
+      - name: Ícones do PWA são reprodutíveis a partir do gerador
+        run: |
+          python3 infra/icones/gerar.py
+          git diff --exit-code --             'web/public/icone*.png' 'web/public/favicon-*.png'             'web/public/apple-touch-icon.png' 'web/public/icone.svg'             || { echo "os ícones no repositório divergem de infra/icones/gerar.py"; exit 1; }

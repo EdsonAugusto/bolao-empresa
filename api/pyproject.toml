@@ -1,0 +1,145 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bolao-api"
+version = "0.1.0"
+description = "API da plataforma de bolões esportivos"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115,<1.0",
+    "uvicorn[standard]>=0.32,<1.0",
+    "sqlalchemy[asyncio]>=2.0.36,<2.1",
+    "asyncpg>=0.30,<0.31",
+    "alembic>=1.14,<2.0",
+    # Sem o extra [email]: a plataforma não envia e-mail, e o validador
+    # estrito recusaria endereços de rede local como `pai@casa.local`.
+    "pydantic>=2.9,<3.0",
+    "pydantic-settings>=2.6,<3.0",
+    "redis>=5.2,<6.0",
+    "arq>=0.26,<0.27",
+    "httpx>=0.28,<0.29",
+    "structlog>=24.4,<26.0",
+    "typer>=0.15,<0.20",
+    "argon2-cffi>=23.1,<26.0",
+    "pyjwt>=2.10,<3.0",
+    "python-slugify>=8.0,<9.0",
+    # Upload de anexo em relato (imagem e áudio). O FastAPI exige para `File`.
+    "python-multipart>=0.0.20,<0.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<9.0",
+    "pytest-asyncio>=0.24,<1.2",
+    "pytest-cov>=6.0,<8.0",
+    "hypothesis>=6.119,<7.0",
+    "ruff>=0.8,<1.0",
+    "mypy>=1.13,<2.0",
+    "types-python-slugify",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+# ---------------------------------------------------------------------------
+# pytest
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# `app` é importado a partir da raiz do projeto. Sem isto o pytest só põe
+# `tests/` no sys.path e o conftest não acha o pacote.
+pythonpath = ["."]
+asyncio_mode = "auto"
+# Um único event loop para a sessão inteira. O engine do SQLAlchemy é criado
+# na importação e seu pool de conexões fica preso ao loop que o abriu; um loop
+# por teste faria o asyncpg reclamar de "attached to a different loop".
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
+addopts = "-q --strict-markers --strict-config"
+markers = [
+    "integration: exige Postgres e Redis reais",
+]
+filterwarnings = ["error::DeprecationWarning:app.*"]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/main.py", "*/alembic/*"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "\\.\\.\\.",
+]
+
+# ---------------------------------------------------------------------------
+# ruff
+# ---------------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["alembic/versions"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",     # pycodestyle
+    "F",          # pyflakes
+    "I",          # isort
+    "N",          # pep8-naming
+    "UP",         # pyupgrade
+    "B",          # bugbear
+    "BLE",        # blind except — só passa com noqa e justificativa
+    "C4",         # comprehensions
+    "DTZ",        # datetime sem timezone — crítico neste projeto
+    "SIM",        # simplify
+    "RUF",
+]
+ignore = [
+    "B008",       # Depends() no default do parâmetro é idiomático em FastAPI
+    # N818 quer sufixo "Error" em toda exceção. As bases já têm (PoolError,
+    # PredictionError, AuthError, ProviderError); as subclasses nomeiam a
+    # *condição* e leem melhor assim: `raise PredictionLocked(...)` diz o que
+    # aconteceu, `PredictionLockedError` só repete o tipo.
+    "N818",
+]
+# `TC` (flake8-type-checking) fica DE FORA de propósito. SQLAlchemy 2 resolve
+# `Mapped[datetime]` em runtime ao configurar o mapper, e o FastAPI resolve as
+# anotações de assinatura para montar a injeção de dependência. Seguir a regra
+# e mover esses imports para um bloco TYPE_CHECKING quebra os dois em runtime,
+# e o erro só aparece na subida do processo — não no lint.
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["DTZ"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+# ---------------------------------------------------------------------------
+# mypy — strict nos módulos de regra de negócio
+# ---------------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+plugins = ["pydantic.mypy"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+ignore_missing_imports = true
+
+# `strict = true` não é aceito em seção por módulo — só globalmente. Aqui vão
+# as flags que ele agrega, aplicadas apenas ao núcleo de regra de negócio.
+[[tool.mypy.overrides]]
+module = ["app.scoring.*", "app.services.*"]
+disallow_any_generics = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_reexport = true
+warn_return_any = true
+strict_equality = true
+extra_checks = true

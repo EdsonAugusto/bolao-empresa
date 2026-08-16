@@ -1,0 +1,175 @@
+# ---------------------------------------------------------------------------
+# Produção: servidor com domínio próprio e certificado válido.
+#
+# É um arquivo inteiro, não um complemento do `docker-compose.yml`. A razão é
+# chata mas decisiva: o Compose **mescla** listas de `ports` e `volumes` em vez
+# de substituí-las, então um complemento não consegue *tirar* a porta do
+# Postgres publicada no host nem o bind-mount do código-fonte. Num servidor
+# público essas duas coisas não podem sobrar por descuido de sintaxe.
+#
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# O `instalar.sh` faz isso e mais o resto. Este arquivo existe para quem
+# quiser entender ou operar na mão.
+# ---------------------------------------------------------------------------
+name: bolao
+
+x-app-base: &app-base
+  build:
+    context: ./api
+    target: prod
+  image: bolao-api:prod
+  restart: unless-stopped
+  env_file: [.env]
+  environment:
+    POSTGRES_HOST: postgres
+    REDIS_HOST: redis
+  volumes:
+    - uploads_data:/data/uploads
+  # Sem bind-mount do código: a imagem é o artefato. Editar arquivo no
+  # servidor e ver o efeito é conveniência de desenvolvimento e armadilha de
+  # produção — na próxima reconstrução a alteração some sem deixar rastro.
+  depends_on:
+    postgres: {condition: service_healthy}
+    redis: {condition: service_healthy}
+    migrate: {condition: service_completed_successfully}
+  logging: &logging
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?defina no .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina no .env}
+      POSTGRES_DB: ${POSTGRES_DB:?defina no .env}
+      TZ: UTC
+      PGTZ: UTC
+    # Sem `ports`. O banco fala com a aplicação pela rede interna do Compose e
+    # não tem por que estar alcançável de fora — publicar a 5432 num servidor
+    # com IP público é convidar varredura.
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bolao} -d ${POSTGRES_DB:-bolao}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    logging: *logging
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", "60", "1"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    logging: *logging
+
+  # Migrations como serviço de execução única. A alternativa — cada container
+  # rodar `alembic upgrade` na subida — faz api e worker competirem pela mesma
+  # trava e transforma um `up` numa corrida.
+  migrate:
+    build:
+      context: ./api
+      target: prod
+    image: bolao-api:prod
+    restart: "no"
+    env_file: [.env]
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+    command: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres: {condition: service_healthy}
+    logging: *logging
+
+  api:
+    <<: *app-base
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - "0.0.0.0"
+      - --port
+      - "8000"
+      - --workers
+      - "${API_WORKERS:-2}"
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - "*"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/live', timeout=3).status == 200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  worker:
+    <<: *app-base
+    command: ["arq", "app.jobs.worker.WorkerSettings"]
+
+  web:
+    build:
+      context: ./web
+      target: prod
+      args:
+        NUXT_PUBLIC_API_BASE: /api
+    image: bolao-web:prod
+    restart: unless-stopped
+    environment:
+      NUXT_PUBLIC_API_BASE: /api
+      NUXT_API_INTERNAL: http://api:8000
+      NODE_ENV: production
+      NITRO_HOST: "0.0.0.0"
+      NITRO_PORT: "3000"
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging: *logging
+
+  caddy:
+    build:
+      context: ./infra/caddy
+    image: bolao-caddy:prod
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    environment:
+      BOLAO_DOMINIO: ${BOLAO_DOMINIO:?defina no .env}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN:?defina no .env}
+      BOLAO_ACME_EMAIL: ${BOLAO_ACME_EMAIL:?defina no .env}
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # `caddy_data` guarda os certificados e a conta ACME. Perdê-lo obriga a
+      # reemitir tudo, e a Let's Encrypt limita emissões por semana — um
+      # volume anônimo aqui viraria bloqueio depois de alguns deploys.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      api: {condition: service_started}
+      web: {condition: service_started}
+    logging: *logging
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:
+  caddy_data:
+  caddy_config:

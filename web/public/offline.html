@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sem conexão · Bolão</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --fundo: #f6f7f9;
+    --superficie: #fff;
+    --texto: #16181d;
+    --fraco: #5b6472;
+    --verde: #0f7a4d;
+    --borda: #e3e6eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fundo: #0b1512;
+      --superficie: #121b18;
+      --texto: #e8ecea;
+      --fraco: #93a09a;
+      --verde: #35b47c;
+      --borda: #223029;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    display: grid;
+    place-items: center;
+    padding: 1.5rem calc(1.5rem + env(safe-area-inset-right)) 1.5rem calc(1.5rem + env(safe-area-inset-left));
+    background: var(--fundo);
+    color: var(--texto);
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .caixa {
+    max-width: 26rem;
+    text-align: center;
+    background: var(--superficie);
+    border: 1px solid var(--borda);
+    border-radius: 16px;
+    padding: 2rem 1.5rem;
+  }
+  img { width: 72px; height: 72px; }
+  h1 { font-size: 1.3rem; margin: 1rem 0 0.4rem; letter-spacing: -0.02em; }
+  p { color: var(--fraco); margin: 0 0 1.25rem; }
+  button {
+    font: inherit;
+    font-weight: 650;
+    color: #fff;
+    background: var(--verde);
+    border: 0;
+    border-radius: 10px;
+    padding: 0.7rem 1.4rem;
+    min-height: 44px;
+    cursor: pointer;
+  }
+  button:focus-visible { outline: 2px solid var(--verde); outline-offset: 3px; }
+</style>
+</head>
+<body>
+  <div class="caixa">
+    <img src="/icone.svg" alt="" width="72" height="72">
+    <h1>Sem conexão</h1>
+    <!-- Nada de "tente novamente mais tarde": a pessoa quer saber por que o
+         palpite dela não entrou, e a resposta honesta é que precisa de rede. -->
+    <p>
+      O aplicativo abriu, mas não consegue falar com o servidor. Placar e
+      palpite dependem da internet — assim que a conexão voltar, é só recarregar.
+    </p>
+    <button type="button" onclick="location.reload()">Tentar de novo</button>
+  </div>
+  <script>
+    // Recarrega sozinho quando o sistema avisar que a rede voltou.
+    addEventListener('online', () => location.reload())
+  </script>
+</body>
+</html>

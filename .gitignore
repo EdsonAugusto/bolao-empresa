@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Node / Nuxt
+node_modules/
+.nuxt/
+.output/
+.data/
+dist/
+*.tsbuildinfo
+
+# Ambiente
+.env
+.env.local
+.env.*.local
+# Cópias que o instalador guarda antes de reescrever o .env — contêm segredos.
+.env.bak.*
+infra/**/.prova.*
+
+# Backups do servidor: dump do banco e anexos de gente.
+backups/
+
+# Editores / SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Infra local
+infra/certs/
+*.pem
+*.key

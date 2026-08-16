@@ -1,0 +1,444 @@
+/* Design original, tema de campo.
+   ---------------------------------------------------------------------------
+   Um sistema pequeno de propósito: poucas variáveis, poucas classes, nada de
+   framework. A tela mais usada é a de palpite, no celular, com pressa — tudo
+   é otimizado para ela.
+
+   O tema não é decoração solta: o verde é o gramado, a listra da faixa é o
+   corte da grama, e o placar é um marcador escuro de estádio. Nada disso
+   compete com o conteúdo — a listra tem 3% de contraste e some no escuro. */
+
+:root {
+  /* Gramado. O verde escuro é a marca; o claro só aparece sobre fundo escuro. */
+  --verde: #10714a;
+  --verde-claro: #16a06a;
+  --verde-vivo: #2fd48a;
+  --verde-fraco: #e8f5ee;
+  --verde-borda: #bfe3d0;
+
+  --fundo: #f4f6f7;
+  --superficie: #fff;
+  --superficie-2: #eef1f3;
+  --superficie-3: #e4e9ec;
+  --texto: #12161b;
+  --texto-fraco: #5c6773;
+  --borda: #dde2e7;
+  --borda-forte: #c6ced6;
+
+  /* Marcador de estádio: escuro sempre, nos dois temas. */
+  --placar-fundo: #14181d;
+  --placar-texto: #f5f7f8;
+
+  --alerta: #b3261e;
+  --aviso: #8a4f00;
+  --ok: #10714a;
+
+  /* Texto que fica em cima de superfície verde. No claro o verde é escuro e
+     pede branco; no escuro ele clareia e branco em cima vira 2,4:1. Um token
+     evita que o próximo elemento verde nasça ilegível. */
+  --sobre-verde: #fff;
+
+  /* Ouro e prata escurecidos até 4,5:1 sobre o card branco: a posição no
+     pódio é texto de 15px em negrito, que não conta como "texto grande". */
+  --ouro: #8a6209;
+  --prata: #5f6a75;
+  --bronze: #9a6234;
+
+  /* Escala de espaço. Passos de 4px, para o ritmo não sair no chute. */
+  --e1: 0.25rem;
+  --e2: 0.5rem;
+  --e3: 0.75rem;
+  --e4: 1rem;
+  --e5: 1.5rem;
+  --e6: 2rem;
+
+  --raio: 14px;
+  --raio-p: 9px;
+  --raio-pill: 999px;
+
+  --sombra: 0 1px 2px rgb(18 22 27 / 5%), 0 4px 14px rgb(18 22 27 / 5%);
+  --sombra-alta: 0 2px 6px rgb(18 22 27 / 8%), 0 12px 32px rgb(18 22 27 / 10%);
+
+  --fonte: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --fonte-num: ui-monospace, 'SF Mono', 'Cascadia Mono', 'Roboto Mono', monospace;
+
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --verde: #2fbd83;
+    --verde-claro: #4ed69c;
+    --verde-vivo: #6df0b8;
+    --verde-fraco: #10261c;
+    --verde-borda: #1d4635;
+
+    --fundo: #0b0d11;
+    --superficie: #151921;
+    --superficie-2: #1c222b;
+    --superficie-3: #252c37;
+    --texto: #e9ecf1;
+    --texto-fraco: #94a0ae;
+    --borda: #272e39;
+    --borda-forte: #384252;
+
+    --placar-fundo: #05070a;
+    --placar-texto: #f2f6f8;
+
+    --alerta: #f87171;
+    --aviso: #fbbf24;
+    --ok: #4ade80;
+
+    --sobre-verde: #07120d;
+
+    --ouro: #e0b64a;
+    --prata: #a9b4bf;
+    --bronze: #c98a54;
+
+    --sombra: 0 1px 2px rgb(0 0 0 / 45%), 0 4px 14px rgb(0 0 0 / 35%);
+    --sombra-alta: 0 2px 8px rgb(0 0 0 / 50%), 0 16px 40px rgb(0 0 0 / 45%);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--fundo);
+  color: var(--texto);
+  font-family: var(--fonte);
+  line-height: 1.55;
+  -webkit-text-size-adjust: 100%;
+}
+
+h1, h2, h3 { line-height: 1.18; margin: 0 0 var(--e2); }
+
+h1 {
+  font-size: clamp(1.5rem, 1.2rem + 1.2vw, 2rem);
+  letter-spacing: -0.02em;
+  font-weight: 800;
+}
+
+h2 { font-size: 1.2rem; letter-spacing: -0.01em; font-weight: 700; }
+h3 { font-size: 1rem; font-weight: 700; }
+p { margin: 0 0 var(--e3); }
+
+a { color: var(--verde); text-underline-offset: 2px; }
+a:hover { color: var(--verde-claro); }
+
+/* --- Superfícies -------------------------------------------------------- */
+.card {
+  background: var(--superficie);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  box-shadow: var(--sombra);
+  padding: var(--e4);
+}
+
+.card + .card { margin-top: var(--e3); }
+.card > h2:first-child, .card > h3:first-child { margin-top: 0; }
+
+.pilha { display: grid; gap: var(--e3); }
+.linha { display: flex; align-items: center; gap: var(--e2); flex-wrap: wrap; }
+.empurra { margin-left: auto; }
+.fraco { color: var(--texto-fraco); }
+.pequeno { font-size: 0.85rem; }
+.centro { text-align: center; }
+.num { font-variant-numeric: tabular-nums; font-feature-settings: 'tnum' 1; }
+
+/* --- Faixa de gramado ---------------------------------------------------
+   O corte da grama, em listras largas e quase invisíveis. Usada no cabeçalho
+   e em estados vazios; nunca atrás de texto corrido. */
+.gramado {
+  background-image: repeating-linear-gradient(
+    90deg,
+    rgb(255 255 255 / 4%) 0 44px,
+    transparent 44px 88px
+  );
+}
+
+/* --- Botões ------------------------------------------------------------- */
+.btn {
+  font: inherit;
+  font-weight: 650;
+  padding: 0.6rem 1.05rem;
+  border-radius: var(--raio-p);
+  border: 1px solid var(--borda-forte);
+  background: var(--superficie);
+  color: var(--texto);
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+  /* Piso de alvo de toque. Vale inclusive para `.btn.pequeno`: "pequeno" ali
+     quer dizer texto menor, não área menor que o dedo. */
+  min-height: 44px;
+  transition: background-color 0.14s ease, border-color 0.14s ease, transform 0.08s ease;
+}
+
+.btn:hover:not(:disabled) { background: var(--superficie-2); border-color: var(--texto-fraco); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.btn--principal {
+  background: var(--verde);
+  border-color: var(--verde);
+  color: var(--sobre-verde);
+}
+
+.btn--principal:hover:not(:disabled) {
+  background: var(--verde-claro);
+  border-color: var(--verde-claro);
+}
+
+.btn--perigo { color: var(--alerta); border-color: var(--alerta); }
+.btn--perigo:hover:not(:disabled) { background: var(--alerta); color: #fff; }
+.btn--fantasma { background: transparent; border-color: transparent; }
+.btn--fantasma:hover:not(:disabled) { background: var(--superficie-2); border-color: transparent; }
+.btn--bloco { width: 100%; }
+.btn.pequeno { padding: 0.4rem 0.75rem; }
+.btn.pequeno:not(.btn--bloco) { min-height: 44px; }
+
+/* --- Formulário --------------------------------------------------------- */
+.campo { display: grid; gap: var(--e1); margin-bottom: var(--e3); }
+.campo > label { font-weight: 650; font-size: 0.9rem; }
+.campo > .dica { font-size: 0.82rem; color: var(--texto-fraco); line-height: 1.45; }
+
+input, select, textarea {
+  font: inherit;
+  color: inherit;
+  padding: 0.58rem 0.7rem;
+  border: 1px solid var(--borda-forte);
+  border-radius: var(--raio-p);
+  background: var(--superficie);
+  width: 100%;
+  transition: border-color 0.14s ease;
+}
+
+input:hover:not(:disabled), select:hover:not(:disabled) { border-color: var(--texto-fraco); }
+
+input:focus-visible, select:focus-visible, textarea:focus-visible,
+.btn:focus-visible, summary:focus-visible, a:focus-visible {
+  outline: 2px solid var(--verde-claro);
+  outline-offset: 2px;
+}
+
+input[type="checkbox"] {
+  width: 1.15rem;
+  height: 1.15rem;
+  accent-color: var(--verde);
+  cursor: pointer;
+}
+
+textarea {
+  min-height: 8rem;
+  font-family: var(--fonte-num);
+  /* 16px é o piso: abaixo disso o Safari do iPhone dá zoom ao focar o campo e
+     não desfaz depois. Em tela larga a fonte menor volta, onde não há esse
+     comportamento e o CSV fica mais confortável. */
+  font-size: 1rem;
+}
+
+@media (width > 700px) {
+  textarea { font-size: 0.88rem; }
+}
+
+/* --- Avisos ------------------------------------------------------------- */
+.aviso {
+  border-radius: var(--raio-p);
+  padding: 0.65rem 0.85rem;
+  border: 1px solid var(--borda);
+  border-left-width: 3px;
+  font-size: 0.9rem;
+  background: var(--superficie-2);
+}
+
+.aviso--erro { border-color: var(--alerta); color: var(--alerta); }
+.aviso--ok { border-color: var(--ok); color: var(--ok); }
+.aviso--atencao { border-color: var(--aviso); color: var(--aviso); }
+
+/* --- Etiquetas ---------------------------------------------------------- */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--raio-pill);
+  border: 1px solid var(--borda-forte);
+  background: var(--superficie-2);
+  color: var(--texto-fraco);
+  white-space: nowrap;
+}
+
+.tag--verde {
+  color: var(--verde);
+  background: var(--verde-fraco);
+  border-color: var(--verde-borda);
+}
+
+.tag--fechado { color: var(--texto-fraco); }
+
+/* Jogo em campo. O ponto pulsa para o olho achar a partida certa numa lista
+   de dez — e para de pulsar para quem pediu menos movimento. */
+.tag--vivo {
+  color: var(--alerta);
+  border-color: var(--alerta);
+  background: transparent;
+  gap: 0.35rem;
+}
+
+.pulso {
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 50%;
+  background: currentcolor;
+  animation: pulso 1.6s ease-in-out infinite;
+}
+
+@keyframes pulso {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.8); }
+}
+
+.placar-chip--vivo { box-shadow: inset 0 0 0 1.5px var(--alerta); }
+
+/* Jogo travado esperando placar: não é erro, é pendência. */
+.tag--espera { color: var(--aviso); border-color: var(--aviso); background: transparent; }
+
+/* --- Escudo ------------------------------------------------------------- */
+.escudo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.escudo img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* Escudo claro sobre fundo escuro: um halo mínimo evita o clube sumir. */
+  filter: drop-shadow(0 1px 1px rgb(0 0 0 / 12%));
+}
+
+.escudo__sigla {
+  width: 100%;
+  height: 100%;
+  border-radius: 30% 30% 38% 38% / 26% 26% 52% 52%;
+  background: var(--superficie-3);
+  border: 1px solid var(--borda-forte);
+  color: var(--texto-fraco);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* --- Tabela ------------------------------------------------------------- */
+.tabela-rolavel {
+  overflow-x: auto;
+  margin-inline: calc(var(--e4) * -1);
+  padding-inline: var(--e4);
+}
+
+table { border-collapse: collapse; width: 100%; font-size: 0.94rem; }
+
+th, td {
+  padding: 0.7rem 0.85rem;
+  text-align: left;
+  border-bottom: 1px solid var(--borda);
+  vertical-align: middle;
+}
+
+th {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  color: var(--texto-fraco);
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  white-space: nowrap;
+  border-bottom-color: var(--borda-forte);
+  background: var(--superficie);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+td:first-child, th:first-child { padding-left: 0; }
+td:last-child, th:last-child { padding-right: 0; }
+tbody tr:last-child td { border-bottom: none; }
+tbody tr { transition: background-color 0.12s ease; }
+tbody tr:hover { background: var(--superficie-2); }
+
+tr.eu {
+  background: var(--verde-fraco);
+  box-shadow: inset 3px 0 0 var(--verde);
+}
+
+tr.eu:hover { background: var(--verde-fraco); }
+tr.eu td { font-weight: 650; }
+
+/* Pódio: as três primeiras posições ganham cor, e só elas. */
+.pos { font-weight: 800; font-variant-numeric: tabular-nums; }
+.pos--1 { color: var(--ouro); }
+.pos--2 { color: var(--prata); }
+.pos--3 { color: var(--bronze); }
+
+/* --- Utilidades --------------------------------------------------------- */
+.so-leitor {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip-path: inset(50%);
+  white-space: nowrap; border: 0;
+}
+
+.vazio {
+  padding: var(--e6) var(--e4);
+  text-align: center;
+  color: var(--texto-fraco);
+  line-height: 1.6;
+}
+
+/* Marcador de estádio. Placar final e números que valem ponto. */
+.placar-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  background: var(--placar-fundo);
+  color: var(--placar-texto);
+  font-family: var(--fonte-num);
+  font-weight: 700;
+  font-size: 0.95rem;
+  letter-spacing: 0.05em;
+  padding: 0.2rem 0.55rem;
+  border-radius: var(--raio-p);
+}
+
+.pontos {
+  font-variant-numeric: tabular-nums;
+  font-weight: 800;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}
+
+
+/* --- Faixas de segurança (entalhe e barra de gestos) ----------------------
+   `viewport-fit=cover` deixa a página ocupar a tela inteira do iPhone, o que
+   é o que faz a instalação parecer um aplicativo de verdade. O preço é ter de
+   devolver o respiro à mão. `env()` vale 0 onde não há entalhe, então nada
+   disto muda no desktop. */
+.area-segura-lados {
+  padding-left: calc(var(--e4) + env(safe-area-inset-left, 0px));
+  padding-right: calc(var(--e4) + env(safe-area-inset-right, 0px));
+}

@@ -1,0 +1,62 @@
+{
+  "id": "/",
+  "name": "Bolão — palpites entre amigos",
+  "short_name": "Bolão",
+  "description": "Palpite os placares, acompanhe o ranking e veja os jogos ao vivo.",
+  "lang": "pt-BR",
+  "dir": "ltr",
+  "start_url": "/?origem=atalho",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone", "minimal-ui"],
+  "orientation": "any",
+  "background_color": "#0b1512",
+  "theme_color": "#0f7a4d",
+  "categories": ["sports", "entertainment"],
+  "icons": [
+    {
+      "src": "/icone-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icone-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icone-mascara-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icone-mascara-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icone.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Meus bolões",
+      "short_name": "Bolões",
+      "url": "/?origem=atalho",
+      "icons": [{ "src": "/icone-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "Campeonatos",
+      "short_name": "Campeonatos",
+      "url": "/campeonatos?origem=atalho",
+      "icons": [{ "src": "/icone-192.png", "sizes": "192x192" }]
+    }
+  ]
+}
