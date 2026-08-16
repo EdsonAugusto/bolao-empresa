@@ -81,22 +81,36 @@ ACME_EMAIL="${BOLAO_ACME_EMAIL:-$(valor_atual BOLAO_ACME_EMAIL)}"
 ADMIN_EMAIL="${BOLAO_ADMIN_EMAIL:-$(valor_atual BOLAO_ADMIN_EMAIL)}"
 ADMIN_SENHA="${BOLAO_ADMIN_SENHA:-}"
 
+# Tira o que a colagem traz junto e o valor nunca deveria ter.
+#
+# O terminal em "bracketed paste" embrulha o texto colado em ESC[200~ e
+# ESC[201~. O `read` guarda isso literalmente, e o token vai para a
+# Cloudflare com lixo na frente — que responde "inválido" sobre um token
+# perfeito. Espaço, tabulação e aspas entram pela mesma porta, de quem
+# copiou com um caractere a mais.
+limpar_colagem() {
+    printf '%s' "$1" \
+        | tr -d '[:cntrl:]' \
+        | sed -e 's/\[20[01]~//g' -e "s/^[[:space:]\"']*//" -e "s/[[:space:]\"']*$//"
+}
+
 perguntar() {
     local rotulo="$1" padrao="${2:-}" resposta
     if [[ -n "$padrao" ]]; then
         read -r -p "  $rotulo [$padrao]: " resposta </dev/tty
-        printf '%s' "${resposta:-$padrao}"
+        limpar_colagem "${resposta:-$padrao}"
     else
         read -r -p "  $rotulo: " resposta </dev/tty
-        printf '%s' "$resposta"
+        limpar_colagem "$resposta"
     fi
 }
 
 perguntar_secreto() {
     local rotulo="$1" resposta
     read -r -s -p "  $rotulo: " resposta </dev/tty
-    printf '\n' >&2
-    printf '%s' "$resposta"
+    printf '
+' >&2
+    limpar_colagem "$resposta"
 }
 
 # Domínio
@@ -160,14 +174,36 @@ fi
 # --- valida o token antes de gastar uma emissão -----------------------------
 titulo "3. Conferindo o token da Cloudflare"
 
-resposta_token="$(curl -fsS -X GET "https://api.cloudflare.com/client/v4/user/tokens/verify" \
+# Sem `-f`: com ele o curl descarta o corpo das respostas 4xx, que é
+# justamente onde a Cloudflare explica o que houve. E o código HTTP vem
+# separado, para distinguir "token recusado" de "não consegui falar com a
+# Cloudflare" — os dois davam a mesma mensagem, e ela culpava o token.
+resposta_token="$(curl -sS -m 20 -w $'
+%{http_code}' -X GET \
+    "https://api.cloudflare.com/client/v4/user/tokens/verify" \
     -H "Authorization: Bearer $CF_TOKEN" \
-    -H "Content-Type: application/json" 2>/dev/null || true)"
+    -H "Content-Type: application/json" 2>&1)" || resposta_token=$'
+000'
 
-if [[ "$resposta_token" != *'"success":true'* ]]; then
-    erro "a Cloudflare recusou este token.
-      Confira se ele tem permissão Zona · DNS · Editar no domínio $DOMINIO,
-      e se não foi revogado ou copiado pela metade."
+codigo_http="$(printf '%s' "$resposta_token" | tail -n1)"
+corpo_token="$(printf '%s' "$resposta_token" | sed '$d')"
+
+if [[ "$codigo_http" == "000" ]]; then
+    erro "não consegui falar com api.cloudflare.com a partir deste servidor.
+      Isto NÃO é o token — é rede. Confira a saída para a internet e o DNS.
+      Detalhe: $(printf '%s' "$corpo_token" | head -c 200)"
+fi
+
+if [[ "$corpo_token" != *'"success":true'* ]]; then
+    # A própria Cloudflare diz o motivo; repassar a frase dela vale mais do
+    # que a minha suposição sobre o que deu errado.
+    motivo="$(printf '%s' "$corpo_token" | grep -o '"message":"[^"]*"' | head -1 | cut -d'"' -f4)"
+    erro "a Cloudflare recusou este token (HTTP $codigo_http).
+      ${motivo:-sem detalhe na resposta}
+
+      O recurso do token tem que ser a ZONA (${DOMINIO#*.}), não o
+      subdomínio, com permissão Zona - DNS - Editar.
+      Caracteres invisíveis da colagem já são removidos automaticamente."
 fi
 ok "token aceito pela Cloudflare"
 
