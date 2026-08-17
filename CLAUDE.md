@@ -327,3 +327,50 @@ Ver `docs/PERMISSOES.md`. O que não pode ser reintroduzido:
     hidratação.** `Math.random()` dá números diferentes nos dois lados. Os
     flashes da cena usam um gerador semeado pelo índice, que produz o mesmo
     valor no servidor e no navegador.
+55. **Sucesso de `docker compose up -d` não significa que o serviço serve.** Ele
+    devolve 0 quando o container INICIA. O worker subia, morria e reiniciava em
+    laço enquanto o instalador dizia "Pronto." — e o sintoma só aparecia dias
+    depois, como jogos terminados sem ninguém pontuar. Quem sobe confere depois,
+    e duas vezes: container em laço aparece como `running` no instante certo.
+56. **`*healthy*` casa com `unhealthy`.** O glob transformava o único portão de
+    saúde do instalador em carimbo: ele declarava "API respondendo" no exato
+    momento em que o Docker acabara de marcar a API como doente. Comparação de
+    estado é exata (`== "api healthy"`), nunca por substring.
+57. **`>/dev/null 2>&1` num comando sem `|| erro` apaga a única explicação que
+    existia.** Três bugs distintos vieram daí. A regra é: ou a saída vai para um
+    arquivo que a mensagem de erro cita, ou fica na tela. Nunca some.
+58. **`curl -f` não falha em 3xx.** Sem `-L` e sem exigir 200, um 301 sai com
+    código 0 — e a Cloudflare em modo `Flexible` devolve exatamente isso, num
+    laço infinito. O instalador declarava "certificado válido" para um site que
+    não abria para ninguém. Verificação de disponibilidade compara o código.
+59. **Backup só existe depois de conferido.** Dump escrito direto no nome final
+    deixa, ao morrer no meio, um `.gz` íntegro e plausível — e o `--clean` da
+    restauração derruba o banco vivo antes de descobrir. Grava-se em
+    `.parcial`, confere-se `gzip -t` e a marca `PostgreSQL database dump
+    complete`, e só então `mv`.
+60. **Restaurar sem `--single-transaction` destrói o que ainda estava bom.**
+    `ON_ERROR_STOP=1` para no primeiro erro, mas parar não é desfazer, e o dump
+    começa por dezenas de `DROP TABLE`.
+61. **`name:` igual nos dois compose faz o de desenvolvimento reescrever a
+    produção.** Um `docker compose up -d` sem `-f` no servidor recriava os
+    containers com bind-mount e publicava Postgres e Redis no host — e como o
+    caddy não existe no arquivo de dev, ele sobrevivia servindo o site: nada
+    parecia quebrado. Projetos separados, `bolao` e `bolao-dev`.
+62. **`pg_isready` sem `-h` fica saudável durante o `initdb`.** O servidor
+    temporário do initdb escuta só no socket unix; sem `-h` o teste fala com
+    ele e aprova. O `migrate` então disca TCP e leva "connection refused". O
+    healthcheck exercita o mesmo caminho que a aplicação usa.
+63. **Limpeza de colagem não se aplica a senha.** Aspas e espaço são caracteres
+    legítimos. Aparar as pontas gravava o hash de uma senha que a pessoa nunca
+    digitou — e a confirmação passava pelo mesmo filtro, então as duas batiam e
+    nada acusava. Token tem alfabeto conhecido; senha não.
+64. **Validar que o token existe não é validar que ele serve.**
+    `/user/tokens/verify` responde `success:true` para qualquer token ativo,
+    seja qual for o escopo. O ✓ verde daí contradizia a dica certa do passo do
+    certificado. Quem valida credencial repete a chamada que o consumidor real
+    vai fazer — aqui, `GET /zones?name=<zona>`, a mesma do módulo DNS do Caddy.
+65. **Reescrever o `.env` do zero apaga o que o operador ajustou.** O próprio
+    projeto ensina a editar `REGISTRATION_MODE` ali; a reinstalação o devolvia
+    para `convite` sem aviso, e a descoberta vinha dias depois como "o pessoal
+    não consegue mais se cadastrar". O gerador preserva as chaves de operação e
+    remonta no fim as que não conhece.

@@ -1,4 +1,14 @@
-name: bolao
+# Nome PRÓPRIO, diferente do de produção.
+#
+# Os dois arquivos descreviam o mesmo projeto `bolao`. Num servidor, bastava
+# rodar `docker compose up -d` sem `-f` (ou `make up`) para o Compose pegar
+# ESTE arquivo e recriar os containers de produção com a configuração de
+# desenvolvimento: Postgres e Redis publicando porta no host, código em
+# bind-mount, `--reload`. O caddy não existe aqui, então sobrevivia como órfão
+# e continuava servindo o site — nada parecia quebrado, enquanto o banco de
+# produção ficava exposto na internet (publicação do Docker é DNAT: passa por
+# cima do ufw).
+name: bolao-dev
 
 services:
   postgres:
@@ -13,11 +23,13 @@ services:
       TZ: UTC
       PGTZ: UTC
     ports:
-      - "${POSTGRES_HOST_PORT:-5433}:5432"
+      # Só o loopback: em máquina de desenvolvimento ninguém precisa do banco
+      # vindo da rede, e um notebook em wifi público não deve oferecê-lo.
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bolao} -d ${POSTGRES_DB:-bolao}"]
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-bolao} -d ${POSTGRES_DB:-bolao}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -28,7 +40,7 @@ services:
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes"]
     ports:
-      - "${REDIS_HOST_PORT:-6380}:6379"
+      - "127.0.0.1:${REDIS_HOST_PORT:-6380}:6379"
     volumes:
       - redis_data:/data
     healthcheck:

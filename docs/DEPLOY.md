@@ -17,6 +17,12 @@ que sai o certificado.
 **Um registro A** apontando o domínio (ou o subdomínio) para o IP do servidor.
 Pode estar com o proxy ligado (nuvem laranja) ou desligado — funciona nos dois.
 
+**Com o proxy ligado, o modo SSL/TLS da zona precisa ser `Full (strict)`**
+(painel: SSL/TLS → Overview). No modo `Flexible` — padrão histórico, ainda
+comum em zonas antigas — a Cloudflare fala com o servidor em HTTP, o Caddy
+responde redirecionando para HTTPS, e o visitante entra em laço
+(`ERR_TOO_MANY_REDIRECTS`). O instalador detecta isso no fim e avisa.
+
 **Portas 80 e 443 abertas** no firewall do provedor.
 
 ---
@@ -42,8 +48,16 @@ E cuida do resto: instala o Docker se faltar, gera chave de assinatura e senha
 de banco aleatórias, constrói as imagens, aplica as migrations, cria a conta de
 administração e emite o certificado. Cinco a dez minutos na primeira vez.
 
-Rodar de novo é seguro. O que já está configurado é preservado — inclusive a
-chave de assinatura, para as sessões abertas continuarem valendo.
+Rodar de novo é seguro. O `.env` anterior é copiado para `.env.bak.<data>` e
+o novo preserva:
+
+- a **chave de assinatura** e a **senha do banco** — sem elas as sessões
+  abertas cairiam e a aplicação perderia acesso aos próprios dados;
+- o **modo de cadastro**, o fuso, o número de workers, o provedor de futebol e
+  a validade do token — ou seja, o que você ajustou depois de instalar;
+- **qualquer chave que você tenha acrescentado à mão** (aviso por Telegram,
+  chave de provedor), remontada no fim do arquivo sob um cabeçalho próprio, e
+  listada na tela para você conferir.
 
 ### O token da Cloudflare
 
@@ -160,21 +174,34 @@ sudo crontab -e
 ```
 
 Guarda os 14 mais recentes e apaga os antigos — backup que enche o disco
-derruba a aplicação que ele deveria proteger. Ajuste com
-`BOLAO_BACKUPS_MANTER`.
+derruba a aplicação que ele deveria proteger. Para mudar, ponha
+`BOLAO_BACKUPS_MANTER=60` no `.env` ou na própria linha do cron. O valor
+mínimo é 1: `0` significaria apagar tudo, inclusive o backup recém-criado, e
+por isso é recusado.
 
 ### Restaurar
 
-Pare a aplicação antes, para nada escrever no meio da restauração, e use
-`ON_ERROR_STOP=1` — sem ele o `psql` engole erro e você fica com um banco pela
-metade achando que restaurou.
+Pare a aplicação antes, para nada escrever no meio da restauração. Duas
+opções fazem a diferença entre restaurar e destruir:
+
+`ON_ERROR_STOP=1` faz o `psql` parar no primeiro erro — sem ele, ele engole e
+segue. Mas parar não é desfazer: o dump começa por dezenas de `DROP TABLE`, e
+um arquivo com problema deixaria o banco pela metade sem caminho de volta.
+`--single-transaction` põe tudo numa transação só, e qualquer erro devolve o
+banco exatamente como estava.
+
+Confira o arquivo antes, é um segundo:
+
+```bash
+gzip -t backups/bolao-AAAAMMDD-HHMMSS.sql.gz && echo "arquivo íntegro"
+```
 
 ```bash
 docker compose -f docker-compose.prod.yml stop api worker web
 ```
 
 ```bash
-gunzip -c backups/bolao-AAAAMMDD-HHMMSS.sql.gz | docker compose -f docker-compose.prod.yml exec -T postgres psql -v ON_ERROR_STOP=1 -U bolao -d bolao
+gunzip -c backups/bolao-AAAAMMDD-HHMMSS.sql.gz | docker compose -f docker-compose.prod.yml exec -T postgres psql -v ON_ERROR_STOP=1 --single-transaction -U bolao -d bolao
 ```
 
 ```bash

@@ -29,10 +29,18 @@ etapa() { printf '\n%s%s%s\n' "$FORTE" "$1" "$FIM"; }
 cd "$RAIZ"
 
 etapa "1. Backup antes de mexer"
-if ./backup.sh >/dev/null 2>&1; then
-    ok "banco salvo em backups/"
+# A razão da falha fica visível.
+#
+# `>/dev/null 2>&1` trocava mensagens acionáveis — "saiu vazio (312 bytes)",
+# "Permission denied", "no such service: postgres" — por uma frase única que
+# não distingue banco fora de disco cheio de permissão. E travava o deploy sem
+# dar caminho de saída.
+if ./backup.sh >/tmp/bolao-backup.log 2>&1; then
+    ok "$(tail -1 /tmp/bolao-backup.log)"
 else
-    erro "o backup falhou. Não vou atualizar sem rede de proteção."
+    tail -20 /tmp/bolao-backup.log
+    erro "o backup falhou (log acima e em /tmp/bolao-backup.log).
+  Não vou atualizar sem rede de proteção."
 fi
 
 etapa "2. Reconstruindo"
@@ -40,15 +48,47 @@ $COMPOSE build --pull >/tmp/bolao-update.log 2>&1 \
     || { tail -30 /tmp/bolao-update.log; erro "construção falhou (log em /tmp/bolao-update.log)"; }
 ok "imagens atualizadas"
 
+# O Caddyfile é conferido ANTES de recriar a borda.
+#
+# Caddyfile inválido faz o container sair na subida, e aí não há site: a
+# atualização que deveria corrigir alguma coisa derruba tudo. Validar custa um
+# segundo e transforma "site fora do ar" em "não atualizei, e olha o motivo".
+if ! saida_valida="$($COMPOSE run --rm --no-deps --entrypoint caddy caddy \
+        validate --config /etc/caddy/Caddyfile --adapter caddyfile 2>&1)"; then
+    printf '%s\n' "$saida_valida"
+    erro "o Caddyfile não passou na validação (acima). Nada foi recriado."
+fi
+ok "Caddyfile válido"
+
 etapa "3. Subindo"
 # O serviço `migrate` roda antes da api por dependência declarada no compose.
-$COMPOSE up -d --remove-orphans >/dev/null 2>&1
+#
+# E é por isso que esta linha precisa de tratador: o compose HONRA
+# `service_completed_successfully` e `service_healthy`, então migration que
+# falha ou API que não fica saudável derrubam ESTE comando — os dois cenários
+# que uma atualização mais produz. Com a saída em /dev/null e sem `|| erro`, o
+# script morria mudo aqui e a etapa 4 inteira, escrita justamente para
+# explicar isso, virava código inalcançável.
+$COMPOSE up -d --remove-orphans >>/tmp/bolao-update.log 2>&1 || {
+    $COMPOSE logs --tail 40 migrate api
+    tail -20 /tmp/bolao-update.log
+    erro "a subida falhou (log acima e em /tmp/bolao-update.log).
+  O backup está em backups/."
+}
 ok "containers recriados"
 
 etapa "4. Conferindo"
+# `web` entra na conferência.
+#
+# A etapa só olhava a api, e a única prova externa batia em /api/health/live —
+# que pelo Caddyfile vai direto para api:8000 e não passa pelo `web` em
+# momento nenhum. Um Nuxt que sobe e estoura em toda renderização satisfazia o
+# `up -d` (o caddy só exige `service_started`), passava pelos dois ✓ e pelo
+# "Pronto", com todo visitante recebendo 502 na raiz.
 saudavel=false
 for _ in $(seq 1 40); do
-    if $COMPOSE ps --format '{{.Service}} {{.Health}}' 2>/dev/null | grep -q '^api healthy'; then
+    estados="$($COMPOSE ps --format '{{.Service}} {{.Health}}' 2>/dev/null || true)"
+    if grep -q '^api healthy' <<<"$estados" && grep -q '^web healthy' <<<"$estados"; then
         saudavel=true
         break
     fi
@@ -56,16 +96,25 @@ for _ in $(seq 1 40); do
 done
 
 if [[ "$saudavel" != true ]]; then
-    $COMPOSE logs --tail 40 api migrate
-    erro "a API não voltou. Log acima; o backup está em backups/."
+    $COMPOSE logs --tail 40 api web migrate
+    erro "a aplicação não voltou. Log acima; o backup está em backups/."
 fi
-ok "API saudável"
+ok "API e site saudáveis"
 
 dominio="$(sed -n 's/^BOLAO_DOMINIO=//p' .env | head -1)"
-if curl -fsS --max-time 10 "https://$dominio/api/health/live" >/dev/null 2>&1; then
+# A raiz, e não só /api: é a URL que 100% das pessoas abrem, e a única que
+# exercita caddy -> web -> api de ponta a ponta. E exigindo 200: sem `-L`,
+# `curl -f` dá sucesso num 301, que é exatamente o que a Cloudflare em modo
+# "Flexible" devolve num laço infinito de redirecionamento.
+codigo="$(curl -sS -L --max-redirs 4 -o /dev/null -m 15 -w '%{http_code}' \
+    "https://$dominio/" 2>/dev/null || echo 000)"
+if [[ "$codigo" == 200 ]]; then
     ok "https://$dominio respondendo"
 else
-    erro "a API está de pé mas o domínio não responde. Veja: $COMPOSE logs caddy"
+    erro "a aplicação está de pé mas o domínio devolveu $codigo.
+  Se for 000, pode ser laço de redirecionamento: confira se o modo SSL/TLS
+  da zona na Cloudflare é Full (strict).
+  Veja também: $COMPOSE logs caddy"
 fi
 
 etapa "Pronto"

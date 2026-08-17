@@ -32,6 +32,24 @@
 		resolvers 1.1.1.1 1.0.0.1
 	}
 
+	# Teto de corpo, como o nginx faz em desenvolvimento.
+	#
+	# O Caddy não tem limite por padrão, e o código conta com o corte da borda
+	# (app/services/anexos.py). No FastAPI o multipart é lido ANTES das
+	# dependências — ou seja, antes de checar quem é a pessoa: um POST anônimo
+	# de 4 GB em /api/v1/.../attachments era gravado inteiro em disco pelo
+	# SpooledTemporaryFile e só então devolvia 401. O sintoma aparecia longe:
+	# disco cheio, Postgres parando por falta de espaço, e no log um erro de
+	# banco sem nada apontando para o upload "corretamente recusado".
+	#
+	# 12 MB e não 8: o teto do anexo é 8 MB, e o envelope multipart mais o
+	# cabeçalho passariam raspando. Quem recusa por tamanho continua sendo a
+	# aplicação, com mensagem própria; isto aqui só impede que o corpo chegue
+	# ao disco.
+	request_body {
+		max_size 12MB
+	}
+
 	encode zstd gzip
 
 	header {
