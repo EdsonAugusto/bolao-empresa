@@ -338,6 +338,35 @@ BOLAO_ADMIN_SENHA="$ADMIN_SENHA" docker compose -f "$COMPOSE_ARQUIVO" exec -T \
     api python -m app.cli criar-admin --email "$ADMIN_EMAIL" --da-variavel-de-ambiente \
     || erro "não consegui criar a conta de administração"
 
+# Existe administrador: o cadastro pode abrir para quem tem convite.
+#
+# O .env nasce `fechado` de propósito — entre o `up` e a criação da conta
+# existe uma janela em que a primeira pessoa a se cadastrar viraria dona da
+# instalação. Agora que a conta existe, a janela fechou.
+sed -i 's/^REGISTRATION_MODE=fechado$/REGISTRATION_MODE=convite/' "$ENV_ARQUIVO"
+docker compose -f "$COMPOSE_ARQUIVO" up -d api worker >/dev/null 2>&1
+ok "cadastro liberado para quem tem código de convite"
+
+# --- borda ------------------------------------------------------------------
+titulo "9. Publicando na internet"
+
+# É AQUI que o site passa a existir para o mundo. Sem esta linha, tudo sobe,
+# tudo fica saudável, e as portas 80 e 443 continuam vazias — a Cloudflare
+# responde 521 e nada no log explica, porque não há log: o container nunca
+# foi criado.
+docker compose -f "$COMPOSE_ARQUIVO" up -d caddy >/dev/null 2>&1 \
+    || erro "não consegui subir a borda (caddy).
+      Veja o motivo:  docker compose -f docker-compose.prod.yml logs caddy"
+
+# Subir o container não é servir: se o Caddy não conseguir o certificado ele
+# sai, e `up -d` já terá devolvido sucesso. Conferimos que ele continua de pé.
+sleep 4
+if ! docker compose -f "$COMPOSE_ARQUIVO" ps caddy --format '{{.State}}' 2>/dev/null | grep -q running; then
+    docker compose -f "$COMPOSE_ARQUIVO" logs caddy --tail 25
+    erro "a borda subiu e caiu. O log está acima."
+fi
+ok "borda no ar nas portas 80 e 443"
+
 # --- certificado ------------------------------------------------------------
 titulo "10. Certificado HTTPS"
 passo "a emissão pela Cloudflare leva de 10 a 60 segundos…"
