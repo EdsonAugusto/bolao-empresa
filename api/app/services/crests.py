@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.logging import get_logger
 from app.core.names import chave
 from app.models import Competition, Fixture, Season, Team
+from app.providers.base import ProviderError
 
 log = get_logger(__name__)
 
@@ -44,6 +45,13 @@ class Resultado:
     sem_escudo: list[str] = field(default_factory=list)
     """Times que sobraram. Continuam com o escudo desenhado pela plataforma."""
 
+    bloqueado: bool = False
+    """A fonte externa recusou atendimento (429) e a passada parou nela.
+
+    Não é erro: é o sinal de que o que foi achado até aqui deve ser gravado e
+    o resto tentado mais tarde.
+    """
+
     @property
     def preenchidos(self) -> int:
         return self.preenchidos_local + self.preenchidos_remoto
@@ -53,6 +61,7 @@ class Resultado:
             "filled_local": self.preenchidos_local,
             "filled_remote": self.preenchidos_remoto,
             "already_had": self.ja_tinham,
+            "blocked": self.bloqueado,
             "missing": self.sem_escudo,
         }
 
@@ -145,14 +154,34 @@ async def preencher(
                 resultado.preenchidos_local += 1
             continue
 
-        if buscador is None or (restantes is not None and restantes <= 0):
+        if (
+            buscador is None
+            or resultado.bloqueado
+            or (restantes is not None and restantes <= 0)
+        ):
             resultado.sem_escudo.append(item.name)
             continue
 
         if restantes is not None:
             restantes -= 1
 
-        achado = await buscador(item.name, item.competition)
+        # Bloqueio da fonte não pode derrubar a passada.
+        #
+        # Sem este `try`, o 429 do TheSportsDB subia por `preencher` e por
+        # `fill_crests` até o arq, e o `session.commit()` do chamador nunca
+        # rodava: TODO escudo achado antes do bloqueio era descartado. O arq
+        # então repetia o job do zero, refazendo as mesmas buscas, tomando 429
+        # de novo — e o log enchia de `Aston Villa` repetido enquanto o número
+        # de clubes sem escudo não se movia. A passada seguia se dizendo
+        # retomável, e era o contrário disso.
+        try:
+            achado = await buscador(item.name, item.competition)
+        except ProviderError as exc:
+            log.warning("escudos.fonte_bloqueada", motivo=str(exc), time=item.name)
+            resultado.bloqueado = True
+            resultado.sem_escudo.append(item.name)
+            continue
+
         if achado is None:
             resultado.sem_escudo.append(item.name)
             continue
@@ -168,5 +197,6 @@ async def preencher(
         local=resultado.preenchidos_local,
         remoto=resultado.preenchidos_remoto,
         faltando=len(resultado.sem_escudo),
+        bloqueado=resultado.bloqueado,
     )
     return resultado

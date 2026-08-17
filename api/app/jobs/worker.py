@@ -429,8 +429,18 @@ async def reconcile(ctx: dict[str, Any]) -> dict[str, Any]:
 #: próxima passada; passar do limite mataria o job e perderia o lote.
 CRESTS_POR_PASSADA = 60
 
+#: Quanto esperar depois de a fonte recusar atendimento. Insistir no mesmo
+#: minuto só rende outro 429 — e cada 429 empurra a janela para frente.
+ESPERA_APOS_BLOQUEIO = timedelta(minutes=10)
 
-async def fill_crests(ctx: dict[str, Any], *, limit: int | None = None) -> dict[str, Any]:
+#: Quantas recusas seguidas antes de desistir. Sem teto, uma fonte fora do ar
+#: manteria o worker tentando para sempre.
+MAX_BLOQUEIOS = 4
+
+
+async def fill_crests(
+    ctx: dict[str, Any], *, limit: int | None = None, bloqueios: int = 0
+) -> dict[str, Any]:
     """Preenche escudo de clube que ainda não tem.
 
     Roda aqui e não no endpoint porque a fonte sem cadastro é limitada com
@@ -440,6 +450,11 @@ async def fill_crests(ctx: dict[str, Any], *, limit: int | None = None) -> dict[
     Trabalha em lotes e **se reagenda** enquanto sobrar clube. Cada passada é
     idempotente: olha só quem continua sem escudo, então retomar depois de um
     bloqueio continua de onde parou em vez de refazer tudo.
+
+    ``bloqueios`` conta quantas passadas seguidas a fonte externa recusou
+    atendimento. Passada bloqueada volta mais tarde, não na hora — insistir no
+    mesmo minuto só rende outro 429 — e desiste depois de algumas, para não
+    ficar batendo numa porta fechada para sempre.
     """
     from app.providers.thesportsdb import TheSportsDbCrests
     from app.services import crests as crest_service
@@ -456,13 +471,33 @@ async def fill_crests(ctx: dict[str, Any], *, limit: int | None = None) -> dict[
     finally:
         await fonte.aclose()
 
-    # Só continua se a passada rendeu: sem isso, uma lista de clubes que
-    # nenhuma fonte conhece faria o job se reagendar para sempre.
+    # Só continua se a passada rendeu, OU se a fonte apenas nos barrou.
+    #
+    # Sem a segunda condição, um 429 no primeiro clube encerraria a série e os
+    # outros cinquenta e nove nunca seriam tentados. Com ela, mas sem o adiamento
+    # abaixo, a próxima passada sairia no mesmo minuto e tomaria 429 de novo.
     restante = max((limit or 0) - lote, 0) if limit else None
-    if faltando and resultado.preenchidos:
+    bloqueios_agora = bloqueios + 1 if resultado.bloqueado else 0
+    vale_continuar = bool(faltando) and (
+        bool(resultado.preenchidos) or (resultado.bloqueado and bloqueios_agora <= MAX_BLOQUEIOS)
+    )
+
+    if vale_continuar:
         redis = ctx.get("redis")
         if redis is not None:
-            await redis.enqueue_job("fill_crests", limit=restante)
+            await redis.enqueue_job(
+                "fill_crests",
+                limit=restante,
+                bloqueios=bloqueios_agora,
+                _defer_by=ESPERA_APOS_BLOQUEIO if resultado.bloqueado else None,
+            )
+    elif resultado.bloqueado:
+        log.warning(
+            "escudos.desisti",
+            bloqueios=bloqueios_agora,
+            faltando=len(faltando),
+            dica="configure FOOTBALL_DATA_ORG_KEY para pegar a liga inteira de uma vez",
+        )
 
     return {**resultado.as_dict(), "still_missing": len(faltando)}
 
