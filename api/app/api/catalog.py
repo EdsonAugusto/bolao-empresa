@@ -675,6 +675,33 @@ async def preencher_escudos(
             await item.aclose()  # type: ignore[attr-defined]
 
     await session.commit()
+
+    # O que o football-data.org não cobre ainda precisa de alguém.
+    #
+    # O plano gratuito conhece oito ligas. Para qualquer outra — EFL League
+    # One, Süper Lig, mata-mata — `buscar_em_bloco` devolve None, e antes disso
+    # era o fim da linha: com a chave configurada, esses clubes não tinham
+    # caminho nenhum e ficariam sem escudo para sempre. O paradoxo era que
+    # configurar a chave PIORAVA o resultado deles, porque desviava do ramo que
+    # usa o TheSportsDB.
+    #
+    # Agora o resto vai para a fila, exatamente como no caminho sem chave: a
+    # parte rápida sai na hora e a lenta continua sozinha, seis segundos por
+    # clube, sem ninguém esperando na frente da tela.
+    faltando, _ = await crest_service.times_por_escudo(session)
+    if faltando:
+        enfileirado = await enqueue_job("fill_crests")
+        return {
+            **resultado.as_dict(),
+            "queued": enfileirado,
+            "still_missing": len(faltando),
+            "note": (
+                f"{len(faltando)} clube(s) fora das ligas do plano gratuito foram "
+                "para a fila, onde a busca é mais lenta. Recarregue a tela daqui "
+                "a alguns minutos."
+            ),
+        }
+
     return resultado.as_dict()
 
 
