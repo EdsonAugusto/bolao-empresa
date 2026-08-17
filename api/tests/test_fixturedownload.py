@@ -199,3 +199,76 @@ async def test_identificador_cortado_continua_unico() -> None:
     jogos = await provider_com(csv).list_fixtures("scottish-premiership", 2026)
 
     assert len({jogo.external_id for jogo in jogos}) == 2
+
+
+# ---------------------------------------------------------------------------
+# Fases eliminatórias
+#
+# A Champions traz 45 dos seus 189 jogos com `Round Number` NÃO numérico —
+# `R16 Game 1`, `SF Game 2`, `Final`. O `int()` estourava, a rodada virava
+# None, e jogo sem rodada entra no banco com `round_id` nulo: existe, mas não
+# aparece em rodada nenhuma para montar bolão. Some justamente o mata-mata,
+# que é o que as pessoas mais querem palpitar.
+
+
+CSV_MATA_MATA = f"""{CABECALHO}
+1,8,28/01/2027 20:00,Emirates Stadium,Arsenal,Inter,1 - 0
+2,Play-off Game 1,17/02/2027 20:00,San Siro,Milan,Porto,2 - 1
+3,R16 Game 2,10/03/2027 20:00,Camp Nou,Barcelona,Bayern,
+4,QF Game 1,07/04/2027 20:00,Anfield,Liverpool,Real Madrid,
+5,SF Game 2,05/05/2027 20:00,Allianz Arena,Bayern,Arsenal,
+6,Final,29/05/2027 19:00,Wembley,Arsenal,Barcelona,
+"""
+
+
+@pytest.mark.anyio
+async def test_fase_eliminatoria_vira_rodada_com_nome_e_ordem() -> None:
+    provider = provider_com(CSV_MATA_MATA)
+    try:
+        jogos = await provider.list_fixtures("champions-league", 2026)
+    finally:
+        await provider.aclose()
+
+    por_nome = {jogo.round.name: jogo.round for jogo in jogos if jogo.round is not None}
+
+    # Nenhum jogo pode ficar sem rodada: é isso que o tornaria invisível.
+    assert all(jogo.round is not None for jogo in jogos)
+    assert len(jogos) == 6
+
+    assert por_nome["Rodada 8"].number == 8
+    assert por_nome["Rodada 8"].is_knockout is False
+
+    # A ordem continua a contagem da fase de liga, para a tela ordenar sozinha.
+    assert por_nome["Play-off (ida)"].number == 9
+    assert por_nome["Oitavas (volta)"].number == 12
+    assert por_nome["Quartas (ida)"].number == 13
+    assert por_nome["Semifinal (volta)"].number == 16
+    assert por_nome["Final"].number == 17
+
+    assert all(
+        por_nome[nome].is_knockout
+        for nome in ("Play-off (ida)", "Oitavas (volta)", "Quartas (ida)", "Final")
+    )
+
+
+@pytest.mark.anyio
+async def test_rotulo_de_fase_desconhecido_ainda_vira_rodada() -> None:
+    """Formato novo não pode fazer jogo sumir.
+
+    Se a UEFA inventar uma fase, o nome cru vira rodada — feio na tela, mas
+    presente. Sumir em silêncio é a única saída que não se pode escolher.
+    """
+    csv_novo = f"""{CABECALHO}
+1,Repescagem Game 1,17/02/2027 20:00,San Siro,Milan,Porto,
+"""
+    provider = provider_com(csv_novo)
+    try:
+        jogos = await provider.list_fixtures("champions-league", 2026)
+    finally:
+        await provider.aclose()
+
+    assert len(jogos) == 1
+    rodada = jogos[0].round
+    assert rodada is not None
+    assert rodada.name == "Repescagem Game 1"
+    assert rodada.number is None

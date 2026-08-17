@@ -155,12 +155,48 @@ class FixtureDownloadProvider(FootballDataProvider):
             return None, None
         return int(achado.group(1)), int(achado.group(2))
 
+    #: Como o fixturedownload nomeia as fases eliminatórias, e o que elas são
+    #: aqui. O número continua a contagem da fase de liga, para a ordenação da
+    #: tela sair certa sem ninguém precisar entender o torneio.
+    #:
+    #: Sem este mapa, `int("R16 Game 1")` estourava e a rodada virava None — e
+    #: jogo sem rodada entra no banco com `round_id` nulo, isto é, não aparece
+    #: em rodada nenhuma para montar bolão. Numa Champions são 45 dos 189 jogos:
+    #: todo o mata-mata, justamente a parte que as pessoas mais querem palpitar.
+    FASES_ELIMINATORIAS: dict[str, tuple[str, int]] = {
+        "play-off game 1": ("Play-off (ida)", 9),
+        "play-off game 2": ("Play-off (volta)", 10),
+        "r16 game 1": ("Oitavas (ida)", 11),
+        "r16 game 2": ("Oitavas (volta)", 12),
+        "qf game 1": ("Quartas (ida)", 13),
+        "qf game 2": ("Quartas (volta)", 14),
+        "sf game 1": ("Semifinal (ida)", 15),
+        "sf game 2": ("Semifinal (volta)", 16),
+        "final": ("Final", 17),
+    }
+
     @classmethod
-    def _rodada(cls, bruto: str | None) -> int | None:
-        try:
-            return int(str(bruto).strip())
-        except (TypeError, ValueError):
+    def _rodada(cls, bruto: str | None) -> ProviderRound | None:
+        texto = str(bruto or "").strip()
+        if not texto:
             return None
+
+        try:
+            numero = int(texto)
+        except ValueError:
+            pass
+        else:
+            return ProviderRound(name=f"Rodada {numero}", number=numero)
+
+        eliminatoria = cls.FASES_ELIMINATORIAS.get(texto.casefold())
+        if eliminatoria is not None:
+            nome, ordem = eliminatoria
+            return ProviderRound(name=nome, number=ordem, is_knockout=True)
+
+        # Rótulo que ainda não conhecemos. Vira rodada com o nome cru em vez de
+        # sumir: melhor um nome esquisito na tela do que um jogo invisível.
+        log.warning("fixturedownload.rodada_desconhecida", valor=texto)
+        return ProviderRound(name=texto, is_knockout=True)
 
     def _traduzir(
         self, linhas: list[dict[str, str]], liga_slug: str, year: int, agora: datetime
@@ -208,11 +244,7 @@ class FixtureDownloadProvider(FootballDataProvider):
                     away_team_external_id=slugify(fora),
                     kickoff_at=kickoff,
                     status=self._status(jogado, kickoff, agora),
-                    round=(
-                        ProviderRound(name=f"Rodada {rodada}", number=rodada)
-                        if rodada is not None
-                        else None
-                    ),
+                    round=rodada,
                     venue=(linha.get("Location") or "").strip() or None,
                     home_ft=gols_casa,
                     away_ft=gols_fora,

@@ -77,6 +77,18 @@ LIGAS: tuple[Liga, ...] = (
     ),
     Liga("ligue-2", "Ligue 2", "França", 34, 306, "2026-08-08", "2026-07-31"),
     Liga("efl-league-one", "EFL League One", "Inglaterra", 46, 552, "2026-08-15", "2026-07-31"),
+    # Champions League: fase de liga de oito rodadas com 36 clubes, mais o
+    # mata-mata — 189 jogos ao todo, e é assim desde a reforma de 2024-25.
+    #
+    # Conferido baixando `champions-league-2025-UTC.csv`: 189 jogos, 36 clubes,
+    # colunas idênticas às das outras ligas. Os rótulos das fases finais NÃO são
+    # numéricos (`R16 Game 1`, `SF Game 2`, `Final`), e é o coletor que os
+    # traduz — ver `FixtureDownloadProvider.FASES_ELIMINATORIAS`.
+    #
+    # A 2026-27 só entra no fixturedownload depois do sorteio da fase de liga,
+    # no fim de agosto. Até lá a importação responde que a temporada ainda não
+    # foi publicada, que é a verdade — e não um erro da instalação.
+    Liga("champions-league", "Champions League", "Europa", 17, 189, "2026-09-15", "2026-08-17"),
 )
 
 LIGAS_POR_SLUG: dict[str, Liga] = {liga.slug: liga for liga in LIGAS}
