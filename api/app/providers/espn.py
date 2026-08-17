@@ -32,10 +32,20 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
 import httpx
+from slugify import slugify
 
 from app.core.logging import get_logger
 from app.models.enums import FixtureStatus
-from app.providers.base import ProviderError
+from app.providers.base import (
+    ProviderCompetition,
+    ProviderError,
+    ProviderFixture,
+    ProviderRound,
+    ProviderSeason,
+    ProviderSnapshot,
+    ProviderTeam,
+    build_external_id,
+)
 
 log = get_logger(__name__)
 
@@ -213,4 +223,222 @@ class EspnScores:
             away_ft=_placar(fora.get("score")),
             minuto=_minuto((competicao.get("status") or {}).get("displayClock")),
             encerrado=bool(estado.get("completed")),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Calendário de copa
+#
+# A ressalva lá em cima — "esta fonte não importa calendário" — vale enquanto o
+# campeonato já existe no banco por outra fonte: importar por aqui criaria uma
+# competição paralela ao lado da que já está lá.
+#
+# A Copa do Brasil é o caso em que a ressalva não se aplica, porque não existe
+# outra fonte. O fixturedownload não a publica. A Wikipédia monta o chaveamento
+# com {{OneLegResult}} e {{TwoLegResult}}, que trazem o placar agregado e
+# NENHUMA data — e sem horário não dá para travar palpite, então o coletor de
+# mata-mata descarta o jogo. E o GE devolve lista vazia para fase eliminatória:
+# as nove fases da edição existem como slug, mas nenhuma combinação de tabela e
+# fase traz um jogo sequer.
+#
+# A ESPN traz data em UTC, mandante, placar, pênaltis e a fase — inclusive de
+# jogo ainda não realizado, que é justamente o que um bolão precisa.
+
+
+#: Fase da ESPN → como ela se chama aqui, e a ordem dentro da temporada.
+#:
+#: A ordem existe para a tela listar as rodadas sem precisar entender de
+#: futebol. Os números têm folga entre si porque copa muda de formato: a Copa
+#: do Brasil já teve mais e menos fases iniciais do que tem hoje.
+FASES_DE_COPA: dict[str, tuple[str, int]] = {
+    "first-round": ("Primeira fase", 10),
+    "second-round": ("Segunda fase", 20),
+    "third-round": ("Terceira fase", 30),
+    "fourth-round": ("Quarta fase", 40),
+    "fifth-round": ("Quinta fase", 50),
+    "group-stage": ("Fase de grupos", 55),
+    "league-phase": ("Fase de liga", 55),
+    "round-of-32": ("Dezesseis avos", 60),
+    "knockout-round-playoffs": ("Play-off", 65),
+    "round-of-16": ("Oitavas de final", 70),
+    "quarterfinals": ("Quartas de final", 80),
+    "semifinals": ("Semifinal", 90),
+    "final": ("Final", 100),
+}
+
+
+def _fase_de(slug: str | None) -> ProviderRound | None:
+    if not slug:
+        return None
+
+    conhecida = FASES_DE_COPA.get(slug.strip().lower())
+    if conhecida is not None:
+        nome, ordem = conhecida
+        return ProviderRound(name=nome, number=ordem, is_knockout=ordem >= 60)
+
+    # Formato novo não pode fazer jogo sumir. Jogo sem rodada entra no banco
+    # com `round_id` nulo: existe, e não aparece em rodada nenhuma para montar
+    # bolão. Nome cru na tela é feio e recuperável; invisível não é.
+    log.warning("espn.fase_desconhecida", slug=slug)
+    return ProviderRound(name=slug.replace("-", " ").capitalize(), is_knockout=True)
+
+
+def _quando(bruto: object) -> datetime | None:
+    """``2026-09-02T00:00Z`` — ISO, mas com o ``Z`` que o ``fromisoformat`` das
+    versões mais antigas recusa. Normaliza e devolve sempre em UTC."""
+    texto = str(bruto or "").strip()
+    if not texto:
+        return None
+    try:
+        momento = datetime.fromisoformat(texto.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return momento.astimezone(UTC) if momento.tzinfo else momento.replace(tzinfo=UTC)
+
+
+class EspnCalendario:
+    """Importa a temporada de uma copa a partir do placar público da ESPN.
+
+    A API responde por janela de datas e **trunca janela longa**: pedir o ano
+    inteiro de uma vez devolveu cem jogos que paravam em abril, enquanto as
+    oitavas de agosto existiam e apareciam ao pedir só agosto. Por isso a coleta
+    é mês a mês, juntando pelo id do evento — doze requisições, sem chave e sem
+    cota.
+    """
+
+    slug = "espn"
+    name = "ESPN"
+
+    def __init__(self, *, base_url: str = BASE_URL, client: httpx.AsyncClient | None = None):
+        self._base_url = base_url.rstrip("/")
+        self._client = client or httpx.AsyncClient(
+            timeout=httpx.Timeout(20.0),
+            follow_redirects=True,
+            # Sem `User-Agent` de propósito: o endpoint devolve 403 para
+            # cabeçalho de navegador e 200 sem cabeçalho nenhum.
+            headers={"Accept": "application/json"},
+        )
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+    async def _janela(self, liga: str, de: date, ate: date) -> list[dict]:
+        url = f"{self._base_url}/{liga}/scoreboard"
+        try:
+            resposta = await self._client.get(
+                url, params={"dates": f"{de:%Y%m%d}-{ate:%Y%m%d}", "limit": 1000}
+            )
+        except httpx.HTTPError as exc:
+            raise EspnError(f"não consegui falar com a ESPN: {exc}") from exc
+
+        if resposta.status_code == 400:
+            raise EspnError(
+                f"a ESPN não conhece a liga '{liga}'. Confira o código: o da "
+                "Copa do Brasil é bra.copa_do_brazil, com z."
+            )
+        if resposta.status_code >= 400:
+            raise EspnError(f"{url} devolveu HTTP {resposta.status_code}")
+
+        try:
+            dados = resposta.json()
+        except ValueError as exc:
+            raise EspnError(f"a ESPN devolveu algo que não é JSON: {exc}") from exc
+        return list(dados.get("events") or [])
+
+    async def import_season(self, liga: str, ano: int) -> ProviderSnapshot:
+        eventos: dict[str, dict] = {}
+        for mes in range(1, 13):
+            # Bordas alargadas em três dias de cada lado.
+            #
+            # A ESPN agrupa por data LOCAL da liga, não UTC: um jogo à meia-noite
+            # UTC do dia 1º está na gaveta do último dia do mês anterior. Entre
+            # meses consecutivos isso não perde nada, porque as janelas se
+            # encostam — mas na virada do ANO perderia, e a final da Copa do
+            # Brasil é em dezembro. A folga custa zero: o `dict` por id descarta
+            # a repetição.
+            inicio = date(ano, mes, 1) - timedelta(days=3)
+            proximo = date(ano + 1, 1, 1) if mes == 12 else date(ano, mes + 1, 1)
+            for evento in await self._janela(liga, inicio, proximo + timedelta(days=2)):
+                identificador = str(evento.get("id") or "")
+                if identificador:
+                    eventos[identificador] = evento
+
+        if not eventos:
+            raise EspnError(
+                f"a ESPN não tem nenhum jogo de {liga} em {ano}. Se a temporada "
+                "ainda não foi sorteada, não há o que importar."
+            )
+
+        times: dict[str, ProviderTeam] = {}
+        jogos: list[ProviderFixture] = []
+
+        for evento in eventos.values():
+            competicao = (evento.get("competitions") or [{}])[0]
+            competidores = competicao.get("competitors") or []
+            casa = next((c for c in competidores if c.get("homeAway") == "home"), None)
+            fora = next((c for c in competidores if c.get("homeAway") == "away"), None)
+            if casa is None or fora is None:
+                continue
+
+            momento = _quando(evento.get("date"))
+            if momento is None:
+                # Sem horário não dá para travar o palpite na hora certa. Pular
+                # é melhor do que inventar data: a próxima coleta traz o jogo.
+                log.warning("espn.jogo_sem_data", evento=evento.get("id"))
+                continue
+
+            ids: dict[str, str] = {}
+            for papel, lado in (("casa", casa), ("fora", fora)):
+                time = lado.get("team") or {}
+                nome = time.get("displayName") or ""
+                identificador = str(time.get("id") or slugify(nome))
+                if not identificador:
+                    break
+                ids[papel] = identificador
+                times.setdefault(
+                    identificador,
+                    ProviderTeam(
+                        external_id=identificador,
+                        name=nome or identificador,
+                        slug=slugify(nome or identificador),
+                        short_name=time.get("shortDisplayName") or None,
+                        crest_url=time.get("logo") or None,
+                    ),
+                )
+            if len(ids) != 2:
+                continue
+
+            estado = (competicao.get("status") or {}).get("type") or {}
+            jogos.append(
+                ProviderFixture(
+                    external_id=build_external_id(liga, str(ano), str(evento.get("id"))),
+                    home_team_external_id=ids["casa"],
+                    away_team_external_id=ids["fora"],
+                    kickoff_at=momento,
+                    status=_status_de(estado),
+                    round=_fase_de((evento.get("season") or {}).get("slug")),
+                    venue=(competicao.get("venue") or {}).get("fullName") or None,
+                    home_ft=_placar(casa.get("score")),
+                    away_ft=_placar(fora.get("score")),
+                    # Pênalti de desempate NÃO conta para pontuação. Vai em
+                    # campo próprio, nunca somado ao placar do tempo normal.
+                    home_pen=_placar(casa.get("shootoutScore")),
+                    away_pen=_placar(fora.get("shootoutScore")),
+                )
+            )
+
+        jogos.sort(key=lambda jogo: jogo.kickoff_at)
+        datas = [jogo.kickoff_at.date() for jogo in jogos]
+        return ProviderSnapshot(
+            competition=ProviderCompetition(external_id=liga, name=liga, slug=slugify(liga)),
+            season=ProviderSeason(
+                external_id=f"{liga}-{ano}",
+                competition_external_id=liga,
+                year=ano,
+                start_date=min(datas) if datas else None,
+                end_date=max(datas) if datas else None,
+                is_current=True,
+            ),
+            teams=tuple(times.values()),
+            fixtures=tuple(jogos),
         )

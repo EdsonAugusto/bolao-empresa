@@ -125,3 +125,44 @@ MATA_MATAS: tuple[MataMata, ...] = (
 )
 
 MATA_MATAS_POR_SLUG: dict[str, MataMata] = {item.slug: item for item in MATA_MATAS}
+
+
+@dataclass(frozen=True, slots=True)
+class Copa:
+    """Copa eliminatória coletada da ESPN.
+
+    Mata-mata brasileiro não tem calendário em CSV nem chaveamento com horário
+    na Wikipédia, e o GE devolve lista vazia para fase eliminatória. A ESPN
+    publica data em UTC, mandante, placar, pênaltis e fase — inclusive de jogo
+    ainda não realizado, que é o que um bolão precisa.
+    """
+
+    slug: str
+    name: str
+    country: str
+
+    espn_league: str
+    """Código da liga na ESPN. O da Copa do Brasil é `bra.copa_do_brazil`,
+    com **z** — `bra.copa_do_brasil` devolve HTTP 400."""
+
+    year: int
+    verificado_em: str
+
+
+#: Conferidas em 17/08/2026 contra a API da ESPN.
+#:
+#: A Champions NÃO entra aqui: ela já vem pelo fixturedownload, em `LIGAS`, e
+#: duas fontes para a mesma competição criariam duas competições lado a lado no
+#: banco — com times e jogos duplicados.
+COPAS: tuple[Copa, ...] = (
+    Copa(
+        slug="copa-do-brasil",
+        name="Copa do Brasil",
+        country="Brasil",
+        espn_league="bra.copa_do_brazil",
+        year=2026,
+        verificado_em="2026-08-17",
+    ),
+)
+
+COPAS_POR_SLUG: dict[str, Copa] = {item.slug: item for item in COPAS}

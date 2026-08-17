@@ -30,6 +30,7 @@ import io
 import re
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from typing import ClassVar
 
 import httpx
 from slugify import slugify
@@ -163,7 +164,7 @@ class FixtureDownloadProvider(FootballDataProvider):
     #: jogo sem rodada entra no banco com `round_id` nulo, isto é, não aparece
     #: em rodada nenhuma para montar bolão. Numa Champions são 45 dos 189 jogos:
     #: todo o mata-mata, justamente a parte que as pessoas mais querem palpitar.
-    FASES_ELIMINATORIAS: dict[str, tuple[str, int]] = {
+    FASES_ELIMINATORIAS: ClassVar[dict[str, tuple[str, int]]] = {
         "play-off game 1": ("Play-off (ida)", 9),
         "play-off game 2": ("Play-off (volta)", 10),
         "r16 game 1": ("Oitavas (ida)", 11),

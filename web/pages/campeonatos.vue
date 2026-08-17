@@ -118,6 +118,46 @@ async function buscarEscudos() {
   }
 }
 
+interface CopaEspn {
+  slug: string
+  name: string
+  country: string
+  year: number
+  verified_at: string
+  imported: boolean
+}
+
+const { data: copasEspn, refresh: recarregarCopasEspn }
+  = useApiData<CopaEspn[]>('copas', '/v1/catalog/copas')
+const importandoCopaEspn = ref('')
+
+async function importarCopaEspn(copa: CopaEspn) {
+  erro.value = ''
+  resultado.value = ''
+  importandoCopaEspn.value = copa.slug
+  try {
+    const dados = await apiFetch<{
+      teams: number
+      fixtures: number
+      phases: string[]
+      note: string
+    }>(
+      '/v1/catalog/copas/import',
+      { method: 'POST', body: { slug: copa.slug } },
+    )
+    resultado.value
+      = `${copa.name}: ${dados.fixtures} jogos e ${dados.teams} clubes `
+        + `(${dados.phases.join(', ')}). ${dados.note}`
+    await Promise.all([refresh(), recarregarCopasEspn()])
+  }
+  catch (error_) {
+    erro.value = (error_ as Error).message
+  }
+  finally {
+    importandoCopaEspn.value = ''
+  }
+}
+
 const { data: copas, refresh: recarregarCopas }
   = useApiData<Copa[]>('mata-matas', '/v1/catalog/mata-matas')
 const importandoCopa = ref('')
@@ -560,6 +600,49 @@ async function importar() {
             {{ importandoLiga === liga.slug
               ? 'importando…'
               : (liga.imported ? 'atualizar' : 'importar') }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <div
+      v-if="copasEspn?.length"
+      class="card"
+    >
+      <h2>Copas</h2>
+      <p class="fraco pequeno">
+        Copa eliminatória não sai em CSV e o chaveamento da Wikipédia não traz
+        horário de jogo — sem horário não dá para travar palpite. Estas vêm da
+        ESPN, que publica data, mandante, placar e pênaltis, inclusive de jogo
+        que ainda não aconteceu.
+      </p>
+
+      <div class="pilha">
+        <div
+          v-for="copa in copasEspn"
+          :key="copa.slug"
+          class="linha preset"
+        >
+          <div>
+            <strong>{{ copa.name }} {{ copa.year }}</strong>
+            <div class="fraco pequeno">
+              {{ copa.country }} · fases sorteadas até agora
+            </div>
+          </div>
+          <span
+            v-if="copa.imported"
+            class="tag tag--verde empurra"
+          >no banco</span>
+          <button
+            type="button"
+            class="btn pequeno"
+            :class="{ empurra: !copa.imported }"
+            :disabled="importandoCopaEspn !== ''"
+            @click="importarCopaEspn(copa)"
+          >
+            {{ importandoCopaEspn === copa.slug
+              ? 'importando…'
+              : (copa.imported ? 'atualizar' : 'importar') }}
           </button>
         </div>
       </div>

@@ -6,6 +6,7 @@ a tabela do campeonato e a plataforma funciona sem depender de ninguém.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from urllib.parse import urlparse
 
@@ -23,6 +24,8 @@ from app.core.redis import enqueue_job
 from app.data.competitions import BY_SLUG, COMO_DESCOBRIR, GE_COMPETITIONS
 from app.data.crests import crest_svg
 from app.data.ligas import (
+    COPAS,
+    COPAS_POR_SLUG,
     LIGAS,
     LIGAS_POR_SLUG,
     MATA_MATAS,
@@ -703,6 +706,121 @@ async def preencher_escudos(
         }
 
     return resultado.as_dict()
+
+
+@router.get("/copas")
+async def copas(session: SessionDep, user: CurrentUser) -> list[dict]:
+    """Copas eliminatórias que a plataforma sabe coletar, e se já estão no banco.
+
+    Separadas das ligas porque a fonte é outra: mata-mata brasileiro não sai em
+    CSV, e o chaveamento da Wikipédia não traz horário de jogo.
+    """
+    ja_tem = {
+        (names.chave(nome), ano)
+        for nome, ano in await session.execute(
+            select(Competition.name, Season.year).join(
+                Season, Season.competition_id == Competition.id
+            )
+        )
+    }
+    return [
+        {
+            "slug": item.slug,
+            "name": item.name,
+            "country": item.country,
+            "year": item.year,
+            "verified_at": item.verificado_em,
+            "imported": (names.chave(item.name), item.year) in ja_tem,
+        }
+        for item in COPAS
+    ]
+
+
+class CopaImportRequest(BaseModel):
+    slug: str = Field(description="Slug da copa, ex.: copa-do-brasil")
+    year: int | None = Field(default=None, ge=2000, le=2100)
+
+
+@router.post("/copas/import", status_code=status.HTTP_201_CREATED)
+async def importar_copa(
+    payload: CopaImportRequest, session: SessionDep, user: PodeImportar
+) -> dict:
+    """Importa uma copa eliminatória pela ESPN.
+
+    São doze requisições, uma por mês: a API trunca janela longa, e pedir o ano
+    inteiro de uma vez devolvia jogos só até abril enquanto as oitavas de agosto
+    existiam.
+    """
+    from app.providers.espn import EspnCalendario, EspnError
+
+    copa = COPAS_POR_SLUG.get(payload.slug)
+    if copa is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"não conheço a copa '{payload.slug}'",
+        )
+
+    ano = payload.year or copa.year
+    provider = EspnCalendario()
+    iniciou = datetime.now(UTC)
+    try:
+        snapshot = await provider.import_season(copa.espn_league, ano)
+    except EspnError as exc:
+        await catalog_service.record_sync_run(
+            session, kind="import_season", status="failed", started_at=iniciou, error=str(exc)
+        )
+        await session.commit()
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+    finally:
+        await provider.aclose()
+
+    # O snapshot vem com o código da ESPN como nome da competição. Trocamos
+    # pelo nome de gente antes de gravar: é o que aparece na tela do bolão.
+    snapshot = replace(
+        snapshot,
+        competition=replace(snapshot.competition, name=copa.name, slug=copa.slug),
+    )
+
+    season, stats = await catalog_service.ingest_snapshot(
+        session, provider.slug, provider.name, snapshot
+    )
+
+    # Guarda a liga da ESPN para o placar ao vivo achar esta competição depois
+    # sem ninguém precisar configurar nada.
+    competicao = await session.get(Competition, season.competition_id)
+    if competicao is not None:
+        config = dict(competicao.provider_config or {})
+        config["espn_league"] = copa.espn_league
+        competicao.provider_config = config
+
+    await catalog_service.record_sync_run(
+        session, kind="import_season", status="success", started_at=iniciou, stats=stats.as_dict()
+    )
+    await session.commit()
+
+    fases = [
+        nome
+        for _, nome in sorted(
+            {
+                (item.round.number or 999, item.round.name)
+                for item in snapshot.fixtures
+                if item.round
+            }
+        )
+    ]
+    return {
+        "season_id": season.id,
+        "competition": copa.name,
+        "year": ano,
+        "teams": len(snapshot.teams),
+        "fixtures": len(snapshot.fixtures),
+        "phases": fases,
+        "note": (
+            "Copa é sorteada por fase: as próximas aparecem conforme os "
+            "confrontos são definidos. Reimportar traz o que faltava sem "
+            "duplicar o que já está aqui."
+        ),
+    }
 
 
 @router.get("/mata-matas")

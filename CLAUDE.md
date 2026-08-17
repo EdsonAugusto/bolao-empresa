@@ -374,3 +374,19 @@ Ver `docs/PERMISSOES.md`. O que não pode ser reintroduzido:
     para `convite` sem aviso, e a descoberta vinha dias depois como "o pessoal
     não consegue mais se cadastrar". O gerador preserva as chaves de operação e
     remonta no fim as que não conhece.
+66. **A ESPN trunca janela de datas longa, em silêncio.** Pedir o ano inteiro
+    da Copa do Brasil devolveu 100 jogos que paravam em abril — enquanto as
+    oitavas de agosto existiam e apareciam ao pedir só agosto. Não há erro nem
+    campo de paginação: a resposta parece completa. Coleta de temporada é mês a
+    mês, juntando pelo id do evento.
+67. **Fase de copa vira rodada, sempre.** `Round Number` não numérico no CSV
+    (`R16 Game 1`, `Final`) e `season.slug` desconhecido na ESPN faziam a rodada
+    virar `None` — e jogo sem rodada entra no banco com `round_id` nulo: existe,
+    e não aparece em rodada nenhuma para montar bolão. Sumiria o mata-mata
+    inteiro sem erro nenhum. Rótulo desconhecido vira rodada com o nome cru.
+68. **Copa do Brasil só tem uma fonte com horário: a ESPN.** O fixturedownload
+    não a publica; a Wikipédia monta o chaveamento com `{{OneLegResult}}` e
+    `{{TwoLegResult}}`, que trazem o placar agregado e nenhuma data; e o GE
+    devolve lista vazia para fase eliminatória — as nove fases existem como
+    slug e nenhuma combinação de tabela e fase traz jogo. Antes de "consertar"
+    isso por outro caminho, releia esta linha.
