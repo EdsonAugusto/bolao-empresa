@@ -793,9 +793,17 @@ async def importar_copa(
     competicao = await session.get(Competition, season.competition_id)
     if competicao is not None:
         config = dict(competicao.provider_config or {})
-        # A liga do placar ao vivo é a PRINCIPAL, não a da qualificação: em
-        # setembro a Champions já está em `uefa.champions`, e é de lá que o
-        # placar vem durante a temporada.
+        # TODAS as ligas do torneio, não só a principal.
+        #
+        # Guardar só `uefa.champions` fazia o placar dos jogos de agosto nunca
+        # ser encontrado: eles são de qualificação, vivem em
+        # `uefa.champions_qual`, e a consulta ia para a liga certa do torneio e
+        # errada do jogo. Voltava vazia, e o jogo ficava 0 a 0 em campo para
+        # sempre — sem erro, porque não achar jogo não é falha.
+        #
+        # O singular fica junto, apontando para a principal, para quem ainda
+        # ler a chave antiga.
+        config["espn_leagues"] = list(copa.espn_leagues)
         config["espn_league"] = copa.espn_leagues[-1]
         competicao.provider_config = config
 

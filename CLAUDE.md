@@ -413,3 +413,10 @@ Ver `docs/PERMISSOES.md`. O que não pode ser reintroduzido:
     branco, e nada indica que ali existem dois campos para digitar. Affordance
     de campo não é enfeite: era a diferença entre palpitar e não saber onde
     clicar.
+73. **Placar ao vivo tenta TODAS as ligas do torneio, não só a principal.**
+    `provider_config['espn_league']` no singular guardava `uefa.champions` para
+    a Champions, e os jogos de agosto são todos de qualificação: a consulta ia
+    para a liga certa do torneio e errada do jogo, voltava vazia, e o jogo
+    ficava 0 a 0 em campo para sempre. Sem erro em log nenhum — não achar jogo
+    não é falha. `espn_leagues` é uma lista, tentada em ordem, parando na
+    primeira que reconhece o confronto.

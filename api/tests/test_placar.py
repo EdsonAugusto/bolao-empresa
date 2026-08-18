@@ -222,7 +222,151 @@ async def test_competicao_sem_liga_da_espn_e_ignorada(db_session: AsyncSession) 
     competition = await db_session.get(Competition, season.competition_id)
     assert competition is not None
 
-    assert placar_service.liga_espn_de(competition) is None
+    assert placar_service.ligas_espn_de(competition) == []
 
+    # A chave antiga, no singular, continua valendo: é o que está gravado nas
+    # competições importadas antes de o torneio poder ter mais de uma liga.
     competition.provider_config = {"espn_league": "ned.1"}
-    assert placar_service.liga_espn_de(competition) == "ned.1"
+    assert placar_service.ligas_espn_de(competition) == ["ned.1"]
+
+    # A nova manda, e preserva a ordem de tentativa.
+    competition.provider_config = {
+        "espn_league": "uefa.champions",
+        "espn_leagues": ["uefa.champions_qual", "uefa.champions"],
+    }
+    assert placar_service.ligas_espn_de(competition) == [
+        "uefa.champions_qual",
+        "uefa.champions",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Torneio partido em duas ligas na fonte
+# ---------------------------------------------------------------------------
+
+
+class _FontePorLiga:
+    """ESPN de mentira que só conhece jogo na liga certa.
+
+    É o comportamento real: pedir a qualificação da Champions em
+    `uefa.champions` devolve lista vazia, não erro.
+    """
+
+    def __init__(self, por_liga: dict[str, list[PlacarAoVivo]]) -> None:
+        self.por_liga = por_liga
+        self.consultadas: list[str] = []
+
+    async def placares(self, liga: str, dia: object) -> list[PlacarAoVivo]:
+        self.consultadas.append(liga)
+        return self.por_liga.get(liga, [])
+
+    async def aclose(self) -> None:
+        return None
+
+
+async def test_placar_de_jogo_da_qualificacao_e_encontrado(db_session: AsyncSession) -> None:
+    """O jogo de agosto da Champions é de qualificação e vive noutra liga.
+
+    Guardando só `uefa.champions`, a consulta ia para a liga certa do torneio e
+    errada do jogo, voltava vazia, e o jogo ficava 0 a 0 em campo para sempre —
+    sem erro nenhum, porque não achar jogo não é falha.
+    """
+    season = await make_season(db_session, 2081)
+    rodada = await make_round(db_session, season)
+    casa = await make_team(db_session, season, "Dinamo Zagreb")
+    fora = await make_team(db_session, season, "Viking FK")
+    jogo = await make_fixture(
+        db_session, season, rodada, casa, fora, kickoff_in=timedelta(hours=-1)
+    )
+
+    competicao = await db_session.get(Competition, season.competition_id)
+    assert competicao is not None
+    competicao.provider_config = {
+        "espn_leagues": ["uefa.champions_qual", "uefa.champions"],
+        "espn_league": "uefa.champions",
+    }
+    await db_session.flush()
+
+    fonte = _FontePorLiga(
+        {
+            "uefa.champions_qual": [
+                _placar(
+                    "Dinamo Zagreb",
+                    "Viking FK",
+                    kickoff_at=jogo.kickoff_at,
+                    home_ft=2,
+                    away_ft=2,
+                    status=FixtureStatus.HT,
+                    encerrado=False,
+                    minuto=45,
+                )
+            ],
+            "uefa.champions": [],
+        }
+    )
+
+    resultado = await placar_service.aplicar_placares(db_session, [jogo], fonte=fonte)
+
+    assert resultado.falhas == []
+    assert (jogo.home_ft, jogo.away_ft) == (2, 2)
+    # Achou na primeira e não gastou requisição na segunda.
+    assert fonte.consultadas == ["uefa.champions_qual"]
+
+
+async def test_ordem_das_ligas_e_respeitada_e_a_segunda_e_tentada(
+    db_session: AsyncSession,
+) -> None:
+    """Em setembro o jogo estará na liga principal, e a qualificação é que sai
+    vazia. As duas precisam ser tentadas, na ordem."""
+    season = await make_season(db_session, 2082)
+    rodada = await make_round(db_session, season)
+    casa = await make_team(db_session, season, "Real Madrid")
+    fora = await make_team(db_session, season, "Arsenal")
+    jogo = await make_fixture(
+        db_session, season, rodada, casa, fora, kickoff_in=timedelta(hours=-1)
+    )
+
+    competicao = await db_session.get(Competition, season.competition_id)
+    assert competicao is not None
+    competicao.provider_config = {"espn_leagues": ["uefa.champions_qual", "uefa.champions"]}
+    await db_session.flush()
+
+    fonte = _FontePorLiga(
+        {
+            "uefa.champions_qual": [],
+            "uefa.champions": [
+                _placar("Real Madrid", "Arsenal", kickoff_at=jogo.kickoff_at, home_ft=3, away_ft=1)
+            ],
+        }
+    )
+
+    await placar_service.aplicar_placares(db_session, [jogo], fonte=fonte)
+
+    assert (jogo.home_ft, jogo.away_ft) == (3, 1)
+    assert fonte.consultadas == ["uefa.champions_qual", "uefa.champions"]
+
+
+async def test_competicao_de_uma_liga_so_continua_com_uma_requisicao(
+    db_session: AsyncSession,
+) -> None:
+    """A mudança não pode dobrar o tráfego de quem tem uma liga só."""
+    season = await make_season(db_session, 2083)
+    rodada = await make_round(db_session, season)
+    casa = await make_team(db_session, season, "Palmeiras")
+    fora = await make_team(db_session, season, "Corinthians")
+    jogo = await make_fixture(
+        db_session, season, rodada, casa, fora, kickoff_in=timedelta(hours=-1)
+    )
+
+    competicao = await db_session.get(Competition, season.competition_id)
+    assert competicao is not None
+    competicao.provider_config = {"espn_league": "bra.1"}
+    await db_session.flush()
+
+    fonte = _FontePorLiga(
+        {"bra.1": [_placar("Palmeiras", "Corinthians", kickoff_at=jogo.kickoff_at)]}
+    )
+
+    await placar_service.aplicar_placares(db_session, [jogo], fonte=fonte)
+
+    assert fonte.consultadas == ["bra.1"]

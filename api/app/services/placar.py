@@ -114,15 +114,31 @@ def casar(
     return encontrados[0][1], False
 
 
-def liga_espn_de(competition: Competition) -> str | None:
-    """Liga da ESPN desta competição, se houver.
+def ligas_espn_de(competition: Competition) -> list[str]:
+    """Ligas da ESPN desta competição, em ordem de tentativa.
 
-    Vem de ``provider_config['espn_league']``, gravado na importação ou pelo
-    backfill. Competição sem mapeamento simplesmente não recebe placar ao vivo
-    por aqui — não é erro.
+    Vem de ``provider_config``, gravado na importação ou pelo backfill.
+    Competição sem mapeamento simplesmente não recebe placar ao vivo por aqui —
+    não é erro.
+
+    **Mais de uma** porque um torneio pode estar partido lá. A Champions tem a
+    qualificação em ``uefa.champions_qual`` e o resto em ``uefa.champions``, e
+    guardar só a principal fazia o placar dos jogos de agosto — que são todos
+    de qualificação — nunca ser encontrado: a consulta ia para a liga certa do
+    torneio e errada do jogo, voltava vazia, e o jogo ficava 0 a 0 em campo
+    para sempre. Sem erro nenhum, porque não achar jogo não é falha.
+
+    ``espn_league`` no singular continua sendo lido: é o que está gravado nas
+    competições importadas antes desta mudança.
     """
-    valor = (competition.provider_config or {}).get("espn_league")
-    return str(valor) if valor else None
+    config = competition.provider_config or {}
+
+    varias = config.get("espn_leagues")
+    if isinstance(varias, list):
+        return [str(item) for item in varias if item]
+
+    unica = config.get("espn_league")
+    return [str(unica)] if unica else []
 
 
 async def aplicar_placares(
@@ -155,20 +171,29 @@ async def aplicar_placares(
             if competicao is None or casa is None or fora is None:
                 continue
 
-            liga = liga_espn_de(competicao)
-            if liga is None:
+            ligas = ligas_espn_de(competicao)
+            if not ligas:
                 continue
 
-            chave = (liga, jogo.kickoff_at.date())
-            if chave not in cache:
-                try:
-                    cache[chave] = await fonte.placares(liga, jogo.kickoff_at.date())
-                except ProviderError as exc:
-                    cache[chave] = []
-                    resultado.falhas.append(f"{competicao.name}: {exc}")
-                    log.warning("placar.fonte_falhou", liga=liga, erro=str(exc))
+            # Percorre as ligas do torneio até uma reconhecer o confronto. Para
+            # na primeira que acha: numa competição de uma liga só isso é
+            # exatamente o que era antes, uma requisição por (liga, dia).
+            achado = None
+            ambiguo = False
+            for liga in ligas:
+                chave = (liga, jogo.kickoff_at.date())
+                if chave not in cache:
+                    try:
+                        cache[chave] = await fonte.placares(liga, jogo.kickoff_at.date())
+                    except ProviderError as exc:
+                        cache[chave] = []
+                        resultado.falhas.append(f"{competicao.name}: {exc}")
+                        log.warning("placar.fonte_falhou", liga=liga, erro=str(exc))
 
-            achado, ambiguo = casar(jogo, casa, fora, cache[chave])
+                achado, ambiguo = casar(jogo, casa, fora, cache[chave])
+                if achado is not None or ambiguo:
+                    break
+
             if ambiguo:
                 resultado.ambiguos.append(f"{casa} x {fora}")
                 log.warning("placar.ambiguo", fixture=jogo.id, casa=casa, fora=fora)
