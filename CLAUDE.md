@@ -390,3 +390,13 @@ Ver `docs/PERMISSOES.md`. O que não pode ser reintroduzido:
     devolve lista vazia para fase eliminatória — as nove fases existem como
     slug e nenhuma combinação de tabela e fase traz jogo. Antes de "consertar"
     isso por outro caminho, releia esta linha.
+69. **A Champions começa em julho, e não em `uefa.champions`.** As
+    eliminatórias vivem em `uefa.champions_qual`; a liga principal só passa a
+    ter jogo depois do sorteio da fase de liga, no fim de agosto. Olhar só a
+    principal em agosto devolve zero e parece "temporada não existe" — havia 90
+    jogos do outro lado, 14 deles por vir. Torneio partido em duas ligas da
+    ESPN é uma competição só aqui, e `Copa.espn_leagues` é uma lista por isso.
+70. **`external_id` de competição não se deriva de lista ordenada.** Quando a
+    coleta junta duas ligas, usar a primeira como identidade faz reordenar a
+    lista criar uma competição paralela no import seguinte, com os mesmos jogos
+    e nenhum aviso. A identidade vem de fora — o slug da copa.

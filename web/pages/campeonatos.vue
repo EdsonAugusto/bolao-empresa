@@ -123,6 +123,7 @@ interface CopaEspn {
   name: string
   country: string
   year: number
+  label: string
   verified_at: string
   imported: boolean
 }
@@ -624,7 +625,7 @@ async function importar() {
           class="linha preset"
         >
           <div>
-            <strong>{{ copa.name }} {{ copa.year }}</strong>
+            <strong>{{ copa.name }} {{ copa.label }}</strong>
             <div class="fraco pequeno">
               {{ copa.country }} · fases sorteadas até agora
             </div>

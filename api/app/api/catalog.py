@@ -729,6 +729,7 @@ async def copas(session: SessionDep, user: CurrentUser) -> list[dict]:
             "name": item.name,
             "country": item.country,
             "year": item.year,
+            "label": item.rotulo,
             "verified_at": item.verificado_em,
             "imported": (names.chave(item.name), item.year) in ja_tem,
         }
@@ -764,7 +765,9 @@ async def importar_copa(
     provider = EspnCalendario()
     iniciou = datetime.now(UTC)
     try:
-        snapshot = await provider.import_season(copa.espn_league, ano)
+        snapshot = await provider.import_season(
+            copa.espn_leagues, ano, virada=copa.virada, identidade=copa.slug
+        )
     except EspnError as exc:
         await catalog_service.record_sync_run(
             session, kind="import_season", status="failed", started_at=iniciou, error=str(exc)
@@ -790,7 +793,10 @@ async def importar_copa(
     competicao = await session.get(Competition, season.competition_id)
     if competicao is not None:
         config = dict(competicao.provider_config or {})
-        config["espn_league"] = copa.espn_league
+        # A liga do placar ao vivo é a PRINCIPAL, não a da qualificação: em
+        # setembro a Champions já está em `uefa.champions`, e é de lá que o
+        # placar vem durante a temporada.
+        config["espn_league"] = copa.espn_leagues[-1]
         competicao.provider_config = config
 
     await catalog_service.record_sync_run(
@@ -812,6 +818,7 @@ async def importar_copa(
         "season_id": season.id,
         "competition": copa.name,
         "year": ano,
+        "label": copa.rotulo,
         "teams": len(snapshot.teams),
         "fixtures": len(snapshot.fixtures),
         "phases": fases,

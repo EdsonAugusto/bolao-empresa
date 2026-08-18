@@ -218,3 +218,130 @@ async def test_liga_desconhecida_diz_qual_e_o_codigo_certo() -> None:
             await provider.import_season("bra.copa_do_brasil", 2026)
     finally:
         await provider.aclose()
+
+
+# ---------------------------------------------------------------------------
+# Torneio partido em duas ligas
+#
+# A Champions começa em julho, pelas eliminatórias, que vivem em
+# `uefa.champions_qual`. Quem olha só `uefa.champions` vê zero jogo até o
+# sorteio da fase de liga, no fim de agosto — e conclui que a temporada não
+# existe, com noventa jogos coletáveis do outro lado.
+
+
+QUALIFICACAO = [
+    _evento(
+        "q1",
+        data="2026-07-07T19:00Z",
+        casa=("10", "Shelbourne"),
+        fora=("11", "Linfield"),
+        fase="first-round",
+    ),
+    _evento(
+        "q2",
+        data="2026-08-18T19:00Z",
+        casa=("12", "Fenerbahce"),
+        fora=("13", "Lyon"),
+        fase="playoff-round",
+    ),
+]
+
+FASE_DE_LIGA = [
+    _evento(
+        "p1",
+        data="2026-09-15T19:00Z",
+        casa=("14", "Real Madrid"),
+        fora=("15", "Arsenal"),
+        fase="league-phase",
+    ),
+    _evento(
+        "p2",
+        data="2027-05-29T19:00Z",
+        casa=("14", "Real Madrid"),
+        fora=("16", "Bayern"),
+        fase="final",
+    ),
+]
+
+
+def provider_de_duas_ligas() -> EspnCalendario:
+    por_liga = {
+        "uefa.champions_qual": QUALIFICACAO,
+        "uefa.champions": FASE_DE_LIGA,
+    }
+
+    def responder(request: httpx.Request) -> httpx.Response:
+        liga = request.url.path.split("/")[-2]
+        janela = request.url.params.get("dates", "")
+        de, _, ate = janela.partition("-")
+        eventos = [
+            evento
+            for evento in por_liga.get(liga, [])
+            if de <= evento["date"][:10].replace("-", "") <= ate
+        ]
+        return httpx.Response(200, text=json.dumps({"events": eventos}))
+
+    return EspnCalendario(client=httpx.AsyncClient(transport=httpx.MockTransport(responder)))
+
+
+@pytest.mark.anyio
+async def test_junta_qualificacao_e_fase_de_liga_num_torneio_so() -> None:
+    provider = provider_de_duas_ligas()
+    try:
+        snapshot = await provider.import_season(
+            ("uefa.champions_qual", "uefa.champions"),
+            2027,
+            virada=True,
+            identidade="champions-league",
+        )
+    finally:
+        await provider.aclose()
+
+    assert len(snapshot.fixtures) == 4
+
+    # A identidade vem de fora: derivá-la da primeira liga faria reordenar a
+    # lista criar uma competição paralela no import seguinte.
+    assert snapshot.competition.external_id == "champions-league"
+    assert snapshot.season.competition_external_id == "champions-league"
+    assert all(jogo.external_id.startswith("champions-league-") for jogo in snapshot.fixtures)
+
+
+@pytest.mark.anyio
+async def test_janela_de_virada_alcanca_julho_do_ano_anterior() -> None:
+    """A temporada 2026-27 é gravada como 2027 e começa em julho de 2026. Uma
+    janela de ano civil perderia a eliminatória inteira."""
+    provider = provider_de_duas_ligas()
+    try:
+        snapshot = await provider.import_season(
+            ("uefa.champions_qual", "uefa.champions"), 2027, virada=True
+        )
+    finally:
+        await provider.aclose()
+
+    datas = sorted(jogo.kickoff_at.isoformat()[:10] for jogo in snapshot.fixtures)
+    assert datas[0] == "2026-07-07"
+    assert datas[-1] == "2027-05-29"
+
+
+@pytest.mark.anyio
+async def test_eliminatoria_nao_se_confunde_com_primeira_fase_de_copa() -> None:
+    """`first-round` quer dizer coisas diferentes em ligas diferentes: na Copa
+    do Brasil é a primeira fase do torneio; na qualificação da Champions é a
+    primeira eliminatória, que acontece antes de tudo."""
+    provider = provider_de_duas_ligas()
+    try:
+        snapshot = await provider.import_season(
+            ("uefa.champions_qual", "uefa.champions"), 2027, virada=True
+        )
+    finally:
+        await provider.aclose()
+
+    por_nome = {jogo.round.name: jogo.round for jogo in snapshot.fixtures if jogo.round is not None}
+    assert "1ª eliminatória" in por_nome
+    assert "Primeira fase" not in por_nome
+    assert por_nome["Play-off de acesso"].number == 8
+
+    # A ordem tem que crescer ao longo da temporada, senão a tela lista a final
+    # antes da eliminatória.
+    ordens = [por_nome[n].number for n in ("1ª eliminatória", "Play-off de acesso", "Final")]
+    assert ordens == sorted(ordens)

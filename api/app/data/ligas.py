@@ -77,18 +77,6 @@ LIGAS: tuple[Liga, ...] = (
     ),
     Liga("ligue-2", "Ligue 2", "França", 34, 306, "2026-08-08", "2026-07-31"),
     Liga("efl-league-one", "EFL League One", "Inglaterra", 46, 552, "2026-08-15", "2026-07-31"),
-    # Champions League: fase de liga de oito rodadas com 36 clubes, mais o
-    # mata-mata — 189 jogos ao todo, e é assim desde a reforma de 2024-25.
-    #
-    # Conferido baixando `champions-league-2025-UTC.csv`: 189 jogos, 36 clubes,
-    # colunas idênticas às das outras ligas. Os rótulos das fases finais NÃO são
-    # numéricos (`R16 Game 1`, `SF Game 2`, `Final`), e é o coletor que os
-    # traduz — ver `FixtureDownloadProvider.FASES_ELIMINATORIAS`.
-    #
-    # A 2026-27 só entra no fixturedownload depois do sorteio da fase de liga,
-    # no fim de agosto. Até lá a importação responde que a temporada ainda não
-    # foi publicada, que é a verdade — e não um erro da instalação.
-    Liga("champions-league", "Champions League", "Europa", 17, 189, "2026-09-15", "2026-08-17"),
 )
 
 LIGAS_POR_SLUG: dict[str, Liga] = {liga.slug: liga for liga in LIGAS}
@@ -141,12 +129,31 @@ class Copa:
     name: str
     country: str
 
-    espn_league: str
-    """Código da liga na ESPN. O da Copa do Brasil é `bra.copa_do_brazil`,
-    com **z** — `bra.copa_do_brasil` devolve HTTP 400."""
+    espn_leagues: tuple[str, ...]
+    """Códigos da liga na ESPN, na ordem em que a temporada acontece.
+
+    Mais de um porque um torneio pode estar partido lá: a Champions tem a
+    qualificação em `uefa.champions_qual` e o resto em `uefa.champions`. São a
+    mesma competição para quem palpita.
+
+    O da Copa do Brasil é `bra.copa_do_brazil`, com **z** —
+    `bra.copa_do_brasil` devolve HTTP 400.
+    """
 
     year: int
+    """Ano com que a temporada é gravada. Torneio de virada é referido pelo ano
+    em que TERMINA, igual às ligas: a Champions 2026-27 entra como 2027."""
+
     verificado_em: str
+
+    virada: bool = False
+    """Temporada que atravessa o ano (agosto a maio). A coleta então vai de
+    julho do ano anterior a junho deste."""
+
+    @property
+    def rotulo(self) -> str:
+        """Como a temporada aparece na tela. `2026-27`, não `2027`."""
+        return f"{self.year - 1}-{self.year % 100:02d}" if self.virada else str(self.year)
 
 
 #: Conferidas em 17/08/2026 contra a API da ESPN.
@@ -159,9 +166,24 @@ COPAS: tuple[Copa, ...] = (
         slug="copa-do-brasil",
         name="Copa do Brasil",
         country="Brasil",
-        espn_league="bra.copa_do_brazil",
+        espn_leagues=("bra.copa_do_brazil",),
         year=2026,
         verificado_em="2026-08-17",
+    ),
+    # A Champions começa em JULHO, pelas eliminatórias — e é aí que ela some de
+    # quem olha só `uefa.champions`, que só passa a ter jogo depois do sorteio
+    # da fase de liga, no fim de agosto. Em 17/08/2026 a qualificação tinha 90
+    # jogos coletáveis, 14 deles ainda por vir, enquanto a liga principal
+    # respondia zero. Foi assim que a Champions "não veio" na primeira
+    # tentativa: a temporada existia, na outra porta.
+    Copa(
+        slug="champions-league",
+        name="Champions League",
+        country="Europa",
+        espn_leagues=("uefa.champions_qual", "uefa.champions"),
+        year=2027,
+        verificado_em="2026-08-17",
+        virada=True,
     ),
 )
 

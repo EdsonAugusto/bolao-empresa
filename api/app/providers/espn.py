@@ -28,6 +28,7 @@ coletor.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
@@ -267,11 +268,34 @@ FASES_DE_COPA: dict[str, tuple[str, int]] = {
 }
 
 
-def _fase_de(slug: str | None) -> ProviderRound | None:
+#: A mesma palavra quer dizer coisas diferentes em ligas diferentes.
+#:
+#: `first-round` na Copa do Brasil é a primeira fase do torneio; na
+#: qualificação da Champions é a primeira ELIMINATÓRIA, que acontece antes de
+#: tudo e não é o mesmo lugar na temporada. Sem esta separação, os 28 jogos de
+#: julho entrariam misturados com a fase de liga de setembro.
+FASES_POR_LIGA: dict[str, dict[str, tuple[str, int]]] = {
+    "uefa.champions_qual": {
+        "first-round": ("1ª eliminatória", 2),
+        "second-round": ("2ª eliminatória", 4),
+        "third-round": ("3ª eliminatória", 6),
+        "playoff-round": ("Play-off de acesso", 8),
+    },
+    "uefa.europa_qual": {
+        "first-round": ("1ª eliminatória", 2),
+        "second-round": ("2ª eliminatória", 4),
+        "third-round": ("3ª eliminatória", 6),
+        "playoff-round": ("Play-off de acesso", 8),
+    },
+}
+
+
+def _fase_de(slug: str | None, liga: str = "") -> ProviderRound | None:
     if not slug:
         return None
 
-    conhecida = FASES_DE_COPA.get(slug.strip().lower())
+    especifica = FASES_POR_LIGA.get(liga, {})
+    conhecida = especifica.get(slug.strip().lower()) or FASES_DE_COPA.get(slug.strip().lower())
     if conhecida is not None:
         nome, ordem = conhecida
         return ProviderRound(name=nome, number=ordem, is_knockout=ordem >= 60)
@@ -345,34 +369,81 @@ class EspnCalendario:
             raise EspnError(f"a ESPN devolveu algo que não é JSON: {exc}") from exc
         return list(dados.get("events") or [])
 
-    async def import_season(self, liga: str, ano: int) -> ProviderSnapshot:
-        eventos: dict[str, dict] = {}
-        for mes in range(1, 13):
+    @staticmethod
+    def _meses(ano: int, virada: bool) -> list[tuple[date, date]]:
+        """Os meses que a temporada cobre, um a um.
+
+        Temporada de virada (Champions: agosto a maio) é referida pelo ano em
+        que TERMINA — a mesma convenção do resto do projeto. A janela então vai
+        de julho do ano anterior a junho deste, e são dezoito meses de folga
+        para caber eliminatória em julho e final em maio.
+        """
+        if virada:
+            primeiro = date(ano - 1, 7, 1)
+            quantos = 12
+        else:
+            primeiro = date(ano, 1, 1)
+            quantos = 12
+
+        janelas: list[tuple[date, date]] = []
+        for passo in range(quantos):
+            mes = (primeiro.month - 1 + passo) % 12 + 1
+            deste_ano = primeiro.year + (primeiro.month - 1 + passo) // 12
+            inicio = date(deste_ano, mes, 1)
+            fim = (
+                date(deste_ano + 1, 1, 1) if mes == 12 else date(deste_ano, mes + 1, 1)
+            ) - timedelta(days=1)
             # Bordas alargadas em três dias de cada lado.
             #
-            # A ESPN agrupa por data LOCAL da liga, não UTC: um jogo à meia-noite
-            # UTC do dia 1º está na gaveta do último dia do mês anterior. Entre
-            # meses consecutivos isso não perde nada, porque as janelas se
-            # encostam — mas na virada do ANO perderia, e a final da Copa do
-            # Brasil é em dezembro. A folga custa zero: o `dict` por id descarta
-            # a repetição.
-            inicio = date(ano, mes, 1) - timedelta(days=3)
-            proximo = date(ano + 1, 1, 1) if mes == 12 else date(ano, mes + 1, 1)
-            for evento in await self._janela(liga, inicio, proximo + timedelta(days=2)):
-                identificador = str(evento.get("id") or "")
-                if identificador:
-                    eventos[identificador] = evento
+            # A ESPN agrupa por data LOCAL da liga, não UTC: um jogo à
+            # meia-noite UTC do dia 1º está na gaveta do último dia do mês
+            # anterior. Entre meses consecutivos isso não perderia nada, porque
+            # as janelas se encostam — mas nas pontas perderia. A folga custa
+            # zero: o `dict` por id descarta a repetição.
+            janelas.append((inicio - timedelta(days=3), fim + timedelta(days=3)))
+        return janelas
+
+    async def import_season(
+        self,
+        ligas: str | Sequence[str],
+        ano: int,
+        *,
+        virada: bool = False,
+        identidade: str | None = None,
+    ) -> ProviderSnapshot:
+        """Junta uma temporada inteira, atravessando ligas e meses.
+
+        ``ligas`` aceita mais de uma porque um torneio pode estar partido na
+        ESPN: a Champions tem a qualificação em ``uefa.champions_qual`` e o
+        resto em ``uefa.champions``. São a mesma competição para quem palpita,
+        e separá-las criaria dois campeonatos com times diferentes na tela.
+
+        ``identidade`` é o ``external_id`` da competição e dos jogos. Vem de
+        fora de propósito: derivá-lo da primeira liga da lista faria reordenar
+        a lista criar uma competição paralela no próximo import, com os mesmos
+        jogos e nenhum aviso.
+        """
+        codigos = [ligas] if isinstance(ligas, str) else list(ligas)
+        chave = identidade or codigos[0]
+        eventos: dict[str, tuple[str, dict]] = {}
+
+        for liga in codigos:
+            for inicio, fim in self._meses(ano, virada):
+                for evento in await self._janela(liga, inicio, fim):
+                    identificador = str(evento.get("id") or "")
+                    if identificador:
+                        eventos[identificador] = (liga, evento)
 
         if not eventos:
             raise EspnError(
-                f"a ESPN não tem nenhum jogo de {liga} em {ano}. Se a temporada "
-                "ainda não foi sorteada, não há o que importar."
+                f"a ESPN não tem nenhum jogo de {', '.join(codigos)} em {ano}. "
+                "Se a temporada ainda não foi sorteada, não há o que importar."
             )
 
         times: dict[str, ProviderTeam] = {}
         jogos: list[ProviderFixture] = []
 
-        for evento in eventos.values():
+        for liga_do_evento, evento in eventos.values():
             competicao = (evento.get("competitions") or [{}])[0]
             competidores = competicao.get("competitors") or []
             casa = next((c for c in competidores if c.get("homeAway") == "home"), None)
@@ -411,12 +482,12 @@ class EspnCalendario:
             estado = (competicao.get("status") or {}).get("type") or {}
             jogos.append(
                 ProviderFixture(
-                    external_id=build_external_id(liga, str(ano), str(evento.get("id"))),
+                    external_id=build_external_id(chave, str(ano), str(evento.get("id"))),
                     home_team_external_id=ids["casa"],
                     away_team_external_id=ids["fora"],
                     kickoff_at=momento,
                     status=_status_de(estado),
-                    round=_fase_de((evento.get("season") or {}).get("slug")),
+                    round=_fase_de((evento.get("season") or {}).get("slug"), liga_do_evento),
                     venue=(competicao.get("venue") or {}).get("fullName") or None,
                     home_ft=_placar(casa.get("score")),
                     away_ft=_placar(fora.get("score")),
@@ -430,10 +501,12 @@ class EspnCalendario:
         jogos.sort(key=lambda jogo: jogo.kickoff_at)
         datas = [jogo.kickoff_at.date() for jogo in jogos]
         return ProviderSnapshot(
-            competition=ProviderCompetition(external_id=liga, name=liga, slug=slugify(liga)),
+            competition=ProviderCompetition(
+                external_id=chave, name=chave, slug=slugify(chave)
+            ),
             season=ProviderSeason(
-                external_id=f"{liga}-{ano}",
-                competition_external_id=liga,
+                external_id=f"{chave}-{ano}",
+                competition_external_id=chave,
                 year=ano,
                 start_date=min(datas) if datas else None,
                 end_date=max(datas) if datas else None,
