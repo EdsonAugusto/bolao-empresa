@@ -51,6 +51,11 @@ class FixtureOut(ORMModel):
     minute: int | None = None
     venue: str | None = None
 
+    competition: str | None = Field(
+        default=None,
+        description="Nome do campeonato. Preenchido pela API, não vem do ORM.",
+    )
+
     home_team: TeamBrief
     away_team: TeamBrief
     round: RoundBrief | None = None

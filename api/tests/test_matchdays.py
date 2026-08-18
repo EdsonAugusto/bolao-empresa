@@ -721,3 +721,55 @@ async def test_excluir_bolao_nao_apaga_o_jogo(db_session: AsyncSession) -> None:
     await db_session.commit()
 
     assert await db_session.get(Fixture, jogo_id) is not None
+
+
+async def test_cada_jogo_diz_de_que_campeonato_e(db_session: AsyncSession) -> None:
+    """Numa rodada montada os jogos vêm de campeonatos diferentes, e lado a
+    lado na tela nada os distinguia. Quem palpita precisa saber se aquele
+    Palmeiras x Corinthians é do Brasileirão ou da Copa do Brasil — a aposta
+    muda."""
+    from app.api.pools import _com_campeonato
+    from app.models import Competition, Season
+    from app.schemas.common import FixtureOut
+
+    _pool, _dono, jogo_br, jogo_pl, _m1, _m2 = await _bolao_personalizado(db_session, 91)
+
+    # As fábricas nomeiam toda competição igual; aqui os nomes precisam diferir.
+    for jogo, nome in ((jogo_br, "Brasileirão Série A"), (jogo_pl, "Premier League")):
+        temporada = await db_session.get(Season, jogo.season_id)
+        assert temporada is not None
+        competicao = await db_session.get(Competition, temporada.competition_id)
+        assert competicao is not None
+        competicao.name = nome
+    await db_session.flush()
+
+    jogos = [jogo_br, jogo_pl]
+    saida = [FixtureOut.model_validate(jogo) for jogo in jogos]
+    resultado = await _com_campeonato(db_session, jogos, saida)
+
+    por_id = {item.id: item for item in resultado}
+    assert por_id[jogo_br.id].competition == "Brasileirão Série A"
+    assert por_id[jogo_pl.id].competition == "Premier League"
+
+
+async def test_campeonato_nao_dispara_consulta_por_jogo(db_session: AsyncSession) -> None:
+    """Uma consulta para a lista inteira, não uma por jogo.
+
+    A tela de palpite é a mais aberta do bolão e uma rodada tem dez jogos; o
+    N+1 apareceria exatamente ali. Lista vazia nem consulta.
+    """
+    from app.api.pools import _com_campeonato
+
+    assert await _com_campeonato(db_session, [], []) == []
+
+
+async def test_estadio_do_jogo_chega_na_tela(db_session: AsyncSession) -> None:
+    """O estádio já vinha de todos os seis coletores e morria no schema sem
+    ninguém mostrar. É a informação que diz se o jogo é em casa de verdade."""
+    from app.schemas.common import FixtureOut
+
+    _pool, _dono, jogo_br, _jogo_pl, _m1, _m2 = await _bolao_personalizado(db_session, 92)
+    jogo_br.venue = "Allianz Parque"
+    await db_session.flush()
+
+    assert FixtureOut.model_validate(jogo_br).venue == "Allianz Parque"

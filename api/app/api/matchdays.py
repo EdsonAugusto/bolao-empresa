@@ -176,9 +176,14 @@ async def matchday_fixtures(
         item.is_included = True
         saida.append(item)
 
-    from app.api.pools import _com_retrospecto
+    from app.api.pools import _com_campeonato, _com_retrospecto
 
-    return await _com_retrospecto(session, jogos, saida)
+    # O campeonato importa MAIS aqui do que na rodada de campeonato: é aqui que
+    # o organizador junta o clássico do Brasileirão com a volta da
+    # Libertadores, e os dois aparecem lado a lado sem nada os distinguindo.
+    return await _com_campeonato(
+        session, jogos, await _com_retrospecto(session, jogos, saida)
+    )
 
 
 @router.get("/{matchday_id}/my-predictions", response_model=list[MyPrediction])

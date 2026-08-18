@@ -131,6 +131,43 @@ def _fixture_out(fixture: Fixture, now: datetime) -> FixtureOut:
     return data
 
 
+async def _com_campeonato(
+    session: AsyncSession, jogos: Sequence[Fixture], saida: list[FixtureOut]
+) -> list[FixtureOut]:
+    """Diz de que campeonato é cada jogo.
+
+    Numa consulta só para a lista inteira, e não uma por jogo — mesmo motivo do
+    retrospecto: uma rodada tem dez jogos e o N+1 apareceria na tela mais
+    aberta do bolão. Como `Fixture` não tem relação declarada com `Season`, um
+    `selectinload` não resolveria de qualquer forma.
+
+    Numa rodada de campeonato todos os jogos são do mesmo, e a informação é
+    redundante. Numa rodada montada à mão não: o organizador junta o clássico
+    do Brasileirão com a volta da Libertadores, e aí saber a qual torneio cada
+    jogo pertence muda o palpite.
+    """
+    if not saida:
+        return saida
+
+    temporadas = {jogo.season_id for jogo in jogos}
+    nomes = dict(
+        (
+            await session.execute(
+                select(Season.id, Competition.name)
+                .join(Competition, Competition.id == Season.competition_id)
+                .where(Season.id.in_(temporadas))
+            )
+        ).all()
+    )
+
+    por_id = {jogo.id: jogo for jogo in jogos}
+    for item in saida:
+        jogo = por_id.get(item.id)
+        if jogo is not None:
+            item.competition = nomes.get(jogo.season_id)
+    return saida
+
+
 async def _com_retrospecto(
     session: AsyncSession, jogos: Sequence[Fixture], saida: list[FixtureOut]
 ) -> list[FixtureOut]:
@@ -738,7 +775,9 @@ async def list_round_fixtures(
         item = _fixture_out(fixture, now)
         item.is_included = fixture.id in incluidos
         saida.append(item)
-    return await _com_retrospecto(session, fixtures, saida)
+    return await _com_campeonato(
+        session, fixtures, await _com_retrospecto(session, fixtures, saida)
+    )
 
 
 @router.put("/{slug}/fixtures/selection", response_model=Message)

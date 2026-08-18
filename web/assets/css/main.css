@@ -421,6 +421,9 @@ tr.eu td { font-weight: 650; }
   letter-spacing: 0.05em;
   padding: 0.2rem 0.55rem;
   border-radius: var(--raio-p);
+  /* Placar é conteúdo fixo: comprimir "10 × 10" para caber num vizinho longo
+     quebraria justamente o número que a pessoa veio ler. */
+  flex-shrink: 0;
 }
 
 .pontos {

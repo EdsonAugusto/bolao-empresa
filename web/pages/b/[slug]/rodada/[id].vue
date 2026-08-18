@@ -40,6 +40,8 @@ interface Jogo {
   minute: number | null
   home_form: string
   away_form: string
+  venue: string | null
+  competition: string | null
 }
 interface MeuPalpite { fixture_id: number, home_goals: number, away_goals: number }
 interface PalpiteAlheio {
@@ -425,6 +427,24 @@ async function salvar() {
         <div class="jogo__topo">
           <span class="pequeno fraco num">{{ hora(jogo.kickoff_at) }}</span>
           <span
+            v-if="jogo.competition || jogo.venue"
+            class="onde pequeno fraco"
+            :title="[jogo.competition, jogo.venue].filter(Boolean).join(' · ')"
+          >
+            <span
+              v-if="jogo.competition"
+              class="onde__parte"
+            >{{ jogo.competition }}</span>
+            <span
+              v-if="jogo.competition && jogo.venue"
+              aria-hidden="true"
+            >·</span>
+            <span
+              v-if="jogo.venue"
+              class="onde__parte onde__parte--estadio"
+            >{{ jogo.venue }}</span>
+          </span>
+          <span
             v-if="emCampo(jogo)"
             class="tag tag--vivo"
           >
@@ -644,6 +664,29 @@ async function salvar() {
   margin-bottom: var(--e2);
   min-height: 1.6rem;
 }
+
+/* Campeonato e estádio ao lado da hora.
+   `min-width: 0` porque item de flex não encolhe abaixo do conteúdo sem isso,
+   e sem encolher ele empurra o placar para fora do card em tela estreita.
+   O texto inteiro fica no `title`, para quem cortar poder ler. */
+.onde {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.onde__parte {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Em tela estreita alguma coisa tem que ceder, e é o estádio: saber que o jogo
+   é da Libertadores muda o palpite, saber em que gramado ele acontece quase
+   nunca muda. Encolhendo seis vezes mais rápido, o nome do campeonato fica
+   inteiro até o fim. O texto completo dos dois continua no `title`. */
+.onde__parte--estadio { flex-shrink: 6; }
 
 .confronto {
   display: grid;
