@@ -688,6 +688,23 @@ async function salvar() {
   background: var(--placar-fundo);
   padding: 0.3rem 0.4rem;
   border-radius: var(--raio-p);
+
+  /* Esta pílula é escura NOS DOIS TEMAS, e o navegador precisa saber disso.
+     A raiz declara `color-scheme: light dark`, então em sistema claro o
+     navegador pinta as partes do campo que não são nossas com a paleta clara:
+     o realce de seleção vem azul-claro com texto PRETO, o preenchimento
+     automático vem com fundo amarelo e texto preto, e em algumas plataformas o
+     cursor também. Dá para digitar e não conseguir ler o que se digitou —
+     exatamente o sintoma. Declarar o escuro aqui alinha o que é nosso com o
+     que é do navegador. */
+  color-scheme: dark;
+}
+
+/* O realce de seleção também, explicitamente: `color-scheme` cobre o padrão,
+   e isto cobre o caso de a página inteira ter definido outro. */
+.entrada ::selection {
+  background: var(--verde);
+  color: var(--sobre-verde);
 }
 
 /* 44px de alvo: são dois campos vizinhos, e errar o de casa pelo de fora é o
@@ -700,11 +717,30 @@ async function salvar() {
   font-weight: 700;
   font-size: 1.25rem;
   padding: 0.3rem 0.1rem;
-  background: transparent;
-  border: none;
+
+  /* Campo transparente e sem borda desaparecia dentro da pílula.
+     No tema escuro isso passava, porque a pílula se parece com o resto da
+     página e o conjunto lê como um controle. No claro ela é uma placa preta no
+     meio de uma tela branca: sem nenhuma marca, ninguém vê que ali existem
+     DOIS campos para digitar. A moldura tênue custa quase nada visualmente e
+     devolve o "digite aqui". */
+  background: rgb(255 255 255 / 8%);
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: calc(var(--raio-p) - 3px);
+
   color: var(--placar-texto);
+  /* No WebKit é este que decide a cor do texto do campo, não `color`. */
+  -webkit-text-fill-color: var(--placar-texto);
+  caret-color: var(--placar-texto);
   -moz-appearance: textfield;
   appearance: textfield;
+}
+
+.entrada input:hover:not(:disabled) { border-color: rgb(255 255 255 / 38%); }
+
+.entrada input:focus-visible {
+  background: rgb(255 255 255 / 14%);
+  border-color: var(--verde-claro);
 }
 
 .entrada input:focus-visible { outline-offset: -2px; }

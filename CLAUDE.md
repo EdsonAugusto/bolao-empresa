@@ -400,3 +400,16 @@ Ver `docs/PERMISSOES.md`. O que não pode ser reintroduzido:
     coleta junta duas ligas, usar a primeira como identidade faz reordenar a
     lista criar uma competição paralela no import seguinte, com os mesmos jogos
     e nenhum aviso. A identidade vem de fora — o slug da copa.
+71. **Ilha escura em página clara precisa declarar `color-scheme: dark`.** A
+    raiz declara `light dark`, então em sistema claro o navegador pinta as
+    partes do campo que não são nossas com a paleta clara — realce de seleção
+    azul-claro com texto PRETO, preenchimento automático com fundo amarelo, e em
+    algumas plataformas o cursor. Dentro da pílula escura do palpite isso vira
+    "digitei e não consigo ler". `color` e `-webkit-text-fill-color` do autor
+    não alcançam essas partes; `color-scheme` na ilha alcança.
+72. **Campo sem fundo e sem borda desaparece quando o entorno é escuro e a
+    página é clara.** No tema escuro a pílula do placar se parece com o resto e
+    o conjunto lê como um controle; no claro ela é uma placa preta no meio do
+    branco, e nada indica que ali existem dois campos para digitar. Affordance
+    de campo não é enfeite: era a diferença entre palpitar e não saber onde
+    clicar.
