@@ -2,6 +2,20 @@
 definePageMeta({ middleware: 'auth' })
 
 const { user, updateProfile, logout } = useAuth()
+const {
+  estado: estadoPush,
+  ocupado: mexendoNoPush,
+  erro: erroPush,
+  verificar: verificarPush,
+  ligar: ligarPush,
+  desligar: desligarPush,
+} = useNotificacaoPush()
+
+// Só no navegador: `Notification` e `navigator.serviceWorker` não existem no
+// servidor, e o estado depende de uma pergunta ao próprio aparelho.
+onMounted(() => {
+  void verificarPush()
+})
 
 const nome = ref('')
 const fuso = ref('America/Sao_Paulo')
@@ -113,6 +127,51 @@ async function excluirConta() {
         Receber avisos aqui na plataforma
       </label>
 
+      <div class="push">
+        <div>
+          <strong>Avisar no celular</strong>
+          <p
+            class="fraco pequeno"
+            style="margin: 0.2rem 0 0"
+          >
+            <template v-if="estadoPush === 'ligado'">
+              Este aparelho recebe o lembrete de palpite mesmo com o app fechado.
+            </template>
+            <template v-else-if="estadoPush === 'bloqueado'">
+              Você bloqueou as notificações deste site no navegador. Só dá para
+              reverter nas permissões do site, no próprio navegador.
+            </template>
+            <template v-else-if="estadoPush === 'indisponivel'">
+              Não disponível aqui — este recurso precisa de HTTPS e de um
+              navegador que o suporte. Os avisos continuam na plataforma.
+            </template>
+            <template v-else>
+              Um lembrete de manhã e outro 30 minutos antes de cada jogo que
+              você ainda não palpitou. Precisa autorizar no aparelho.
+            </template>
+          </p>
+          <p
+            v-if="erroPush"
+            class="pequeno"
+            style="color: var(--alerta); margin: 0.3rem 0 0"
+          >
+            {{ erroPush }}
+          </p>
+        </div>
+
+        <button
+          v-if="estadoPush === 'desligado' || estadoPush === 'ligado'"
+          type="button"
+          class="btn pequeno empurra"
+          :disabled="mexendoNoPush"
+          @click="estadoPush === 'ligado' ? desligarPush() : ligarPush()"
+        >
+          {{ mexendoNoPush
+            ? 'um instante…'
+            : (estadoPush === 'ligado' ? 'Desligar neste aparelho' : 'Ligar neste aparelho') }}
+        </button>
+      </div>
+
       <label class="opcao">
         <input
           v-model="telegram"
@@ -212,6 +271,20 @@ async function excluirConta() {
 </template>
 
 <style scoped>
+/* Cada aparelho se inscreve sozinho, então isto é um estado do aparelho e não
+   uma preferência da conta — por isso o bloco tem cara própria, separado das
+   caixas de seleção que o botão Salvar controla. */
+.push {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--e3);
+  flex-wrap: wrap;
+  margin: var(--e2) 0;
+  padding: var(--e3);
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-p);
+}
+
 .estreito { max-width: 36rem; margin-inline: auto; }
 .opcao { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.6rem; }
 .opcao input { width: auto; }

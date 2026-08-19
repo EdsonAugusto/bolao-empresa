@@ -56,7 +56,7 @@ from app.models.prediction import (
     SyncRun,
 )
 from app.models.report import Report, ReportAttachment, ReportComment
-from app.models.user import AuditLog, RefreshSession, User
+from app.models.user import AuditLog, PushSubscription, RefreshSession, User
 
 __all__ = [
     "AuditAction",
@@ -90,6 +90,7 @@ __all__ = [
     "Prediction",
     "PredictionScore",
     "Provider",
+    "PushSubscription",
     "RefreshSession",
     "Report",
     "ReportAttachment",

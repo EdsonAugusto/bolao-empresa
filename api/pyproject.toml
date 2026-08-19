@@ -27,6 +27,10 @@ dependencies = [
     "python-slugify>=8.0,<9.0",
     # Upload de anexo em relato (imagem e áudio). O FastAPI exige para `File`.
     "python-multipart>=0.0.20,<0.1",
+    # Notificação que chega no celular com o app fechado. Web Push é padrão do
+    # navegador: não há serviço a contratar, nem conta em nuvem — a chave VAPID
+    # é gerada na instalação e o servidor fala direto com o navegador da pessoa.
+    "pywebpush>=2.0,<3.0",
 ]
 
 [project.optional-dependencies]

@@ -45,6 +45,10 @@ class User(IdMixin, TimestampMixin, Base):
     # --- Notificação ------------------------------------------------------
     notify_in_app: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     notify_telegram: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    #: Notificação do navegador, a que chega com o app fechado. Nasce ligada
+    #: porque só sai para quem tiver inscrito um aparelho — e inscrever exige
+    #: a pessoa autorizar no próprio celular. Sem inscrição, nada acontece.
+    notify_push: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     telegram_chat_id: Mapped[str | None] = mapped_column(String(64), default=None)
     # Fora desta janela (hora local do usuário) nada é enviado.
     quiet_hours_start: Mapped[int] = mapped_column(default=23, nullable=False)
@@ -119,3 +123,35 @@ class AuditLog(IdMixin, Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+
+
+class PushSubscription(IdMixin, TimestampMixin, Base):
+    """Um aparelho inscrito para receber notificação do navegador.
+
+    Uma pessoa tem vários: o celular, o computador do trabalho, o tablet de
+    casa. Cada um se inscreve sozinho e é revogado sozinho.
+
+    O ``endpoint`` é uma URL do serviço de push do fabricante do navegador
+    (Google, Mozilla, Apple) e funciona como identidade: reinscrever o mesmo
+    aparelho devolve a mesma URL, então ela é a chave única. As duas chaves
+    guardadas ao lado são o que cifra a mensagem ponta a ponta — o serviço de
+    push encaminha sem conseguir ler.
+    """
+
+    __tablename__ = "push_subscriptions"
+    __table_args__ = (
+        UniqueConstraint("endpoint", name="uq_push_subscriptions_endpoint"),
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    endpoint: Mapped[str] = mapped_column(Text, nullable=False)
+    p256dh: Mapped[str] = mapped_column(String(255), nullable=False)
+    auth: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    #: Só para a pessoa reconhecer o aparelho na lista e poder desligar o
+    #: certo. Nunca usado para decidir nada.
+    user_agent: Mapped[str | None] = mapped_column(String(255), default=None)
+    last_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)

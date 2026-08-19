@@ -8,13 +8,14 @@ verificação — quem entra é quem tem o link de convite do bolão.
 from __future__ import annotations
 
 import secrets
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.concurrency import run_in_threadpool
 
 from app.core.config import settings
+from app.core.logging import get_logger
 from app.core.security import (
     TokenError,
     create_access_token,
@@ -27,6 +28,16 @@ from app.core.security import (
     verify_password,
 )
 from app.models import RefreshSession, User
+
+log = get_logger(__name__)
+
+#: Por quanto tempo um refresh já rotacionado ainda é aceito como retentativa.
+#:
+#: Curta de propósito: é o tempo de uma requisição que não voltou, não o de uma
+#: sessão. Trinta segundos cobrem folgado a reconexão de um celular trocando de
+#: rede, e continuam estreitos demais para servir de janela a quem roubou o
+#: token e voltar horas depois.
+GRACA_DE_REUSO = timedelta(seconds=30)
 
 #: Hash contra o qual senhas de e-mail inexistente são conferidas, para o tempo
 #: de resposta não denunciar quais contas existem. Calculado uma vez, sobre uma
@@ -199,8 +210,30 @@ async def rotate_refresh_token(
     now = datetime.now(UTC)
 
     if stored.revoked_at is not None:
-        await _revoke_family(session, stored.family_id, reason=now)
-        raise TokenError("refresh token reutilizado; todas as sessões foram encerradas")
+        # Resposta perdida não é roubo.
+        #
+        # A rotação acontece no servidor ANTES de a resposta chegar ao cliente.
+        # Num celular — que é onde o app vive — a conexão cai no meio o tempo
+        # todo: o servidor rotaciona, a resposta se perde, e o aplicativo
+        # continua com o token velho sem saber que ele já virou. A próxima
+        # tentativa era lida como reuso e derrubava a família inteira, ou seja,
+        # deslogava a pessoa de todos os aparelhos por causa de um pacote
+        # perdido.
+        #
+        # Dentro da janela de carência, o token revogado rotaciona de novo em
+        # vez de derrubar tudo. Um ladrão que replique dentro desses segundos
+        # não ganha nada que o dono já não tivesse; fora dela, o
+        # comportamento é o de antes.
+        recente = stored.revoked_at is not None and now - stored.revoked_at <= GRACA_DE_REUSO
+        if not (recente and stored.replaced_by_id is not None):
+            await _revoke_family(session, stored.family_id, reason=now)
+            raise TokenError("refresh token reutilizado; todas as sessões foram encerradas")
+
+        log.info(
+            "auth.refresh_reapresentado",
+            familia=stored.family_id,
+            segundos=(now - stored.revoked_at).total_seconds(),
+        )
 
     if stored.expires_at <= now:
         stored.revoked_at = now

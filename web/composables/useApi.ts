@@ -127,7 +127,13 @@ export function useTokens() {
   // aí impede que a sessão vaze num acesso http:// acidental.
   const comum = {
     sameSite: 'lax' as const,
-    maxAge: 60 * 60 * 24 * 30,
+    // Cento e oitenta dias, o mesmo prazo do refresh no servidor.
+    //
+    // O cookie é reescrito a cada renovação, então o prazo desliza: quem abre
+    // o app de vez em quando nunca chega perto do fim. O que este número
+    // decide é o tempo MÁXIMO de app fechado — e trinta dias deslogava quem
+    // viajava ou sumia numa pausa do campeonato.
+    maxAge: 60 * 60 * 24 * 180,
     secure: import.meta.client ? window.location.protocol === 'https:' : false,
     path: '/',
   }
@@ -164,9 +170,24 @@ async function rotateRefresh(): Promise<string | null> {
         refresh.value = tokens.refresh_token
         return tokens.access_token
       })
-      .catch(() => {
-        access.value = null
-        refresh.value = null
+      .catch((erro) => {
+        // Só o servidor DIZENDO não encerra a sessão.
+        //
+        // Antes, qualquer falha aqui apagava os dois cookies — e "qualquer"
+        // inclui o celular sem sinal, o wifi trocando de rede e a API
+        // reiniciando. O app instalado abria fora de cobertura, tentava
+        // renovar, não conseguia falar com ninguém, e se deslogava sozinho.
+        // Recuperar exigia digitar a senha de novo, sem nada explicando por
+        // quê.
+        //
+        // Falha de transporte vem com status 0. Aí os tokens ficam onde estão
+        // e a próxima tentativa, com rede, funciona. Só 401 e 403 — que são o
+        // servidor recusando o refresh — encerram de fato.
+        const status = toApiError(erro).status
+        if (status === 401 || status === 403) {
+          access.value = null
+          refresh.value = null
+        }
         return null
       })
       .finally(() => {

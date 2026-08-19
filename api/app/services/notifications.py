@@ -14,6 +14,7 @@ Regras que valem para todo canal, sem exceção:
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -24,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.logging import get_logger
-from app.models import Membership, Notification, NotificationStatus, User
+from app.models import Membership, Notification, NotificationStatus, PushSubscription, User
 from app.providers.notifications import (
     NotificationChannel,
     NotificationMessage,
@@ -41,6 +42,14 @@ TEMPLATES: dict[str, tuple[str, str]] = {
     "prediction_reminder": (
         "Faltam seus palpites",
         "Você ainda não palpitou {pending} jogo(s) da {round} no {pool}. Fecha em {deadline}.",
+    ),
+    "palpites_do_dia": (
+        "Tem jogo hoje",
+        "Você ainda não palpitou {pending} jogo(s) de hoje no {pool}.",
+    ),
+    "ultima_chamada": (
+        "Última chamada",
+        "{fixture} começa em {minutes} minutos e você ainda não palpitou no {pool}.",
     ),
     "round_closed": ("Rodada fechada", "Os palpites da {round} no {pool} foram encerrados."),
     "fixture_settled": ("Jogo apurado", "{fixture} terminou {score}. Você fez {points} ponto(s)."),
@@ -152,9 +161,25 @@ def channels_for(user: User) -> list[str]:
     enabled = []
     if user.notify_in_app:
         enabled.append("in_app")
+    # Sem `and tem inscrição` aqui de propósito: descobrir isso custa uma
+    # consulta, e o despacho já precisa carregar as inscrições para montar o
+    # endereço. Se não houver nenhuma, o canal responde "nenhum aparelho
+    # inscrito" e o aviso segue pelos outros.
+    if user.notify_push:
+        enabled.append("push")
     if user.notify_telegram and user.telegram_chat_id:
         enabled.append("telegram")
     return enabled
+
+
+async def inscricoes_de_push(session: AsyncSession, user_id: int) -> list[PushSubscription]:
+    return list(
+        (
+            await session.scalars(
+                select(PushSubscription).where(PushSubscription.user_id == user_id)
+            )
+        ).all()
+    )
 
 
 async def dispatch_pending(
@@ -167,7 +192,11 @@ async def dispatch_pending(
     """Entrega o que está na fila. Chamado pelo worker."""
     now = now or datetime.now(UTC)
     active = channels or build_channels(
-        settings.notification_channels, telegram_bot_token=settings.telegram_bot_token
+        settings.notification_channels,
+        telegram_bot_token=settings.telegram_bot_token,
+        vapid_public_key=settings.vapid_public_key,
+        vapid_private_key=settings.vapid_private_key,
+        vapid_subject=settings.vapid_subject,
     )
     by_kind = {channel.kind: channel for channel in active}
 
@@ -217,8 +246,29 @@ async def dispatch_pending(
             channel = by_kind.get(kind)
             if channel is None:
                 continue
-            address = user.telegram_chat_id if kind == "telegram" else None
+
+            address: str | None = None
+            if kind == "telegram":
+                address = user.telegram_chat_id
+            elif kind == "push":
+                # A lista de aparelhos vai em JSON porque o provedor não fala
+                # com o banco — quem tem sessão é este serviço.
+                inscricoes = await inscricoes_de_push(session, user.id)
+                address = json.dumps(
+                    [
+                        {"endpoint": i.endpoint, "p256dh": i.p256dh, "auth": i.auth}
+                        for i in inscricoes
+                    ]
+                )
+
             outcome = await channel.send(address, message)
+
+            # Aparelho que o navegador declarou morto sai da lista agora.
+            # Mantê-lo faria toda notificação futura tentar entregar num
+            # endereço que nunca mais vai responder.
+            if outcome.expirados:
+                await _apagar_inscricoes(session, outcome.expirados)
+
             if outcome.delivered:
                 delivered_any = True
             else:
@@ -278,3 +328,19 @@ async def mark_read(session: AsyncSession, user_id: int, notification_ids: Seque
 def retry_delay(attempts: int) -> timedelta:
     """Recuo exponencial, com teto de uma hora."""
     return timedelta(seconds=min(3600, 30 * (2 ** max(0, attempts - 1))))
+
+
+async def _apagar_inscricoes(session: AsyncSession, endpoints: Sequence[str]) -> int:
+    """Tira da lista os aparelhos que o navegador encerrou (404/410)."""
+    alvos = [e for e in endpoints if e]
+    if not alvos:
+        return 0
+
+    mortas = (
+        await session.scalars(select(PushSubscription).where(PushSubscription.endpoint.in_(alvos)))
+    ).all()
+    for inscricao in mortas:
+        await session.delete(inscricao)
+    if mortas:
+        log.info("push.inscricoes_removidas", quantas=len(mortas))
+    return len(mortas)

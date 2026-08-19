@@ -35,7 +35,7 @@ onMounted(() => {
         class="marca"
       >
         <img
-          src="/icone.svg"
+          src="/marca-96.png"
           alt=""
           width="26"
           height="26"

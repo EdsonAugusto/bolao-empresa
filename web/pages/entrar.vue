@@ -68,7 +68,7 @@ async function enviar() {
   <div class="janela">
     <div class="card cartao">
       <img
-        src="/icone.svg"
+        src="/marca-96.png"
         alt=""
         width="52"
         height="52"

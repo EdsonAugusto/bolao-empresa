@@ -255,6 +255,30 @@ funda, `docker system prune -a` — sem `--volumes`, que apagaria o banco.
 
 ---
 
+## Aviso no celular
+
+Com HTTPS, a plataforma passa a mandar notificação do navegador — a que aparece
+na tela de bloqueio com o app fechado. É o único canal que alcança quem esqueceu
+de palpitar, porque quem esqueceu é justamente quem não abriu o app.
+
+São dois lembretes:
+
+- **de manhã**, com o que ainda falta palpitar no dia;
+- **30 minutos antes** de cada jogo que a pessoa não palpitou.
+
+Não há serviço a contratar. Web Push é padrão do navegador: o instalador gera
+um par de chaves VAPID e o servidor fala direto com o serviço de push do
+fabricante do navegador. As chaves ficam no `.env` e são preservadas entre
+execuções do instalador — trocá-las invalidaria toda inscrição já feita, e cada
+pessoa teria que autorizar de novo.
+
+Cada aparelho se inscreve sozinho, em **Perfil → Avisos → Avisar no celular**.
+Precisa da pessoa autorizar no próprio aparelho; ninguém é inscrito à revelia.
+
+Na instalação de rede local isto não existe, e não é limitação da plataforma: o
+navegador se recusa a assinar sem HTTPS. Lá os avisos seguem aparecendo no
+sininho, dentro do app.
+
 ## Instalar no celular
 
 Com HTTPS válido, o navegador oferece a instalação. Um botão "Instalar" aparece

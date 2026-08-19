@@ -418,6 +418,35 @@ docker compose -f "$COMPOSE_ARQUIVO" build --pull >/tmp/bolao-build.log 2>&1 \
     || { tail -30 /tmp/bolao-build.log; erro "a construção falhou (log completo em /tmp/bolao-build.log)"; }
 ok "imagens prontas"
 
+# --- notificação do celular -------------------------------------------------
+# As chaves VAPID só podem ser geradas AGORA, não junto do resto do .env: quem
+# sabe o formato exato que o navegador aceita é a biblioteca, e ela só existe
+# depois da imagem construída.
+#
+# São preservadas entre execuções porque trocá-las invalida toda inscrição já
+# feita: cada aparelho assinou contra a chave pública antiga, e o serviço de
+# push passa a recusar. Ninguém perde dado, mas todo mundo teria que autorizar
+# de novo, sem entender por quê.
+if ! grep -q '^VAPID_PRIVATE_KEY=.' "$ENV_ARQUIVO"; then
+    if chaves_vapid="$(docker compose -f "$COMPOSE_ARQUIVO" run --rm --no-deps \
+        api python -m app.cli gerar-vapid 2>/dev/null)" \
+        && [[ "$chaves_vapid" == *VAPID_PUBLIC_KEY=* ]]; then
+        {
+            echo
+            echo "# --- Notificação do navegador (Web Push) ---------------------------------"
+            printf '%s\n' "$chaves_vapid"
+            echo "VAPID_SUBJECT=mailto:$ACME_EMAIL"
+        } >> "$ENV_ARQUIVO"
+        ok "chaves de notificação geradas"
+    else
+        # Não é motivo para parar a instalação: sem chave, o canal de push
+        # simplesmente não se constrói e os avisos continuam dentro do app.
+        aviso "não consegui gerar as chaves de notificação; os avisos ficarão só na plataforma"
+    fi
+else
+    ok "chaves de notificação preservadas"
+fi
+
 # --- subida -----------------------------------------------------------------
 titulo "7. Subindo os serviços"
 

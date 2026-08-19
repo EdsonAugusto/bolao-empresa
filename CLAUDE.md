@@ -420,3 +420,27 @@ Ver `docs/PERMISSOES.md`. O que não pode ser reintroduzido:
     ficava 0 a 0 em campo para sempre. Sem erro em log nenhum — não achar jogo
     não é falha. `espn_leagues` é uma lista, tentada em ordem, parando na
     primeira que reconhece o confronto.
+74. **Qualquer falha do refresh apagava a sessão, inclusive falha de rede.** O
+    `.catch()` do cliente zerava os dois cookies sem olhar o motivo, e "motivo"
+    incluía celular sem sinal e API reiniciando. O app instalado abria fora de
+    cobertura e se deslogava sozinho. Só 401 e 403 — o servidor recusando —
+    encerram a sessão; status 0 é transporte e os tokens ficam onde estão.
+75. **Rotação de refresh precisa de carência para retentativa de rede.** O
+    servidor rotaciona ANTES de a resposta chegar; se ela se perde, o app volta
+    com o token velho e isso era lido como reuso, derrubando a família inteira
+    — deslogando a pessoa de todos os aparelhos por causa de um pacote perdido.
+    Trinta segundos de carência separam retentativa de roubo.
+76. **Ícone de PWA sai da arte, não de um hexadecimal escolhido.** A cor de
+    fundo do ícone mascarado vem do anel do próprio brasão, varrendo de fora
+    para dentro — amostrar a 4% da borda pegava o aro claro externo e a moldura
+    saía descolada do desenho. E o `maskable` entra a 78%: o Android recorta até
+    20% de cada lado, e sem a folga ele come o anel.
+77. **Lembrete de palpite não pode ser ancorado em `Round.starts_at`.** Rodada
+    montada à mão não tem `Round` nenhuma, então o bolão que mistura
+    campeonatos — o que mais precisa de lembrete, por não ter calendário
+    previsível — nunca recebia nada. A pergunta certa é por janela de horário de
+    jogo, e `included_fixture_ids` já sabe o que vale em cada tipo de bolão.
+78. **Contar "faltam N" pelo total da rodada mente para quem palpitou metade.**
+    `members_without_prediction` responde QUEM avisar, não QUANTO falta a cada
+    um. Dizer "faltam 3" a quem já fez dois é o tipo de erro que ensina a pessoa
+    a ignorar o aviso — e aí o recurso inteiro deixa de servir.

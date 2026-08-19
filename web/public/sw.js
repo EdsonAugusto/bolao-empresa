@@ -69,7 +69,7 @@ if (!BUILD) {
 /** O mínimo para a tela offline aparecer sem depender da rede. */
 const ESSENCIAIS = [
   '/offline.html',
-  '/icone.svg',
+  '/marca-96.png',
   '/icone-192.png',
   '/favicon-32.png',
   '/manifest.webmanifest',
@@ -126,7 +126,7 @@ function eRevalidavel(url) {
   return (
     caminho === '/manifest.webmanifest'
     || caminho === '/offline.html'
-    || /^\/(icone|favicon|apple-touch-icon)[\w-]*\.(png|svg)$/.test(caminho)
+    || /^\/(icone|favicon|apple-touch-icon|marca)[\w-]*\.png$/.test(caminho)
   )
 }
 
@@ -201,4 +201,55 @@ self.addEventListener('fetch', (evento) => {
 // detectada, em vez de esperar todas as abas fecharem.
 self.addEventListener('message', (evento) => {
   if (evento.data === 'assumir-agora') self.skipWaiting()
+})
+
+// --- Notificação do navegador ---------------------------------------------
+//
+// Chega mesmo com o app fechado — é o único caminho para avisar quem esqueceu
+// de palpitar, porque quem esqueceu é justamente quem não abriu o app.
+
+self.addEventListener('push', (evento) => {
+  // Push sem corpo existe: alguns serviços mandam um "acorde" vazio. Melhor um
+  // aviso genérico do que uma exceção dentro do service worker, que o navegador
+  // registra como falha de entrega e pode usar para cortar as próximas.
+  let dados = { title: 'Bolão', body: 'Você tem um aviso novo.', url: '/' }
+  try {
+    if (evento.data) dados = { ...dados, ...evento.data.json() }
+  }
+  catch {
+    if (evento.data) dados.body = evento.data.text() || dados.body
+  }
+
+  evento.waitUntil(
+    self.registration.showNotification(dados.title, {
+      body: dados.body,
+      icon: '/icone-192.png',
+      badge: '/favicon-48.png',
+      // `tag` faz o aviso novo SUBSTITUIR o anterior do mesmo assunto em vez
+      // de empilhar. Sem isso, quem passa o dia fora encontra cinco lembretes
+      // do mesmo jogo na tela de bloqueio.
+      tag: dados.tag || 'bolao',
+      renotify: Boolean(dados.tag),
+      data: { url: dados.url || '/' },
+    }),
+  )
+})
+
+self.addEventListener('notificationclick', (evento) => {
+  evento.notification.close()
+  const destino = (evento.notification.data && evento.notification.data.url) || '/'
+
+  // Reaproveita a janela que já está aberta em vez de abrir outra. Abrir uma
+  // nova a cada aviso deixa a pessoa com meia dúzia de cópias do app.
+  evento.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((janelas) => {
+      for (const janela of janelas) {
+        if ('focus' in janela) {
+          if ('navigate' in janela) janela.navigate(destino).catch(() => {})
+          return janela.focus()
+        }
+      }
+      return self.clients.openWindow(destino)
+    }),
+  )
 })

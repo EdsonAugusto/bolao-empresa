@@ -444,3 +444,49 @@ def import_season(
 
 if __name__ == "__main__":
     cli()
+
+
+@cli.command("gerar-vapid")
+def gerar_vapid() -> None:
+    """Gera o par de chaves VAPID da notificação do navegador.
+
+    Roda uma vez, na instalação. As duas linhas saem prontas para colar no
+    `.env` — o instalador faz isso sozinho.
+
+    Trocar as chaves depois INVALIDA todas as inscrições existentes: cada
+    aparelho assinou contra a chave pública antiga e o serviço de push vai
+    recusar. Não é perda de dado, mas todo mundo tem que autorizar de novo.
+    """
+    import base64
+
+    from cryptography.hazmat.primitives import serialization
+    from py_vapid import Vapid01
+
+    par = Vapid01()
+    par.generate_keys()
+
+    # Pública: ponto EC não comprimido em base64url sem preenchimento. É o
+    # formato que `applicationServerKey` do navegador aceita, e só ele.
+    publica = (
+        base64.urlsafe_b64encode(
+            par.public_key.public_bytes(
+                serialization.Encoding.X962,
+                serialization.PublicFormat.UncompressedPoint,
+            )
+        )
+        .decode()
+        .rstrip("=")
+    )
+
+    # Privada: os 32 bytes crus, também em base64url. É o que o pywebpush lê
+    # com `Vapid02.from_raw`.
+    privada = (
+        base64.urlsafe_b64encode(
+            par.private_key.private_numbers().private_value.to_bytes(32, "big")
+        )
+        .decode()
+        .rstrip("=")
+    )
+
+    typer.echo(f"VAPID_PUBLIC_KEY={publica}")
+    typer.echo(f"VAPID_PRIVATE_KEY={privada}")

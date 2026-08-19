@@ -16,12 +16,13 @@ from typing import Any, ClassVar
 
 from arq import cron
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.db import SessionLocal
 from app.core.logging import configure_logging, get_logger
 from app.core.redis import TravaOcupada, arq_redis_settings, trava_de_job
-from app.models import Fixture, FixtureStatus, Pool, PoolRound, Round
+from app.models import Fixture, FixtureStatus, Pool, PoolRound, Round, Team
 from app.providers.factory import build_provider
 from app.services import catalog as catalog_service
 from app.services import notifications as notify_service
@@ -334,6 +335,113 @@ async def prediction_reminders(ctx: dict[str, Any]) -> dict[str, Any]:
     return {"reminders": created}
 
 
+async def lembrete_do_dia(ctx: dict[str, Any]) -> dict[str, Any]:
+    """De manhã, o resumo do que ainda falta palpitar hoje.
+
+    O lembrete antigo era ancorado no INÍCIO da rodada, o que só serve para
+    campeonato de calendário fixo — e mesmo lá deixava passar o jogo de domingo
+    de uma rodada que começou no sábado. Este olha o dia da pessoa: tudo que
+    ainda vai começar hoje, em qualquer bolão, de campeonato ou montado à mão.
+
+    "Hoje" é o dia no fuso de exibição, não em UTC. Rodando às 11h UTC — 8h em
+    Brasília — a janela vai daqui até a virada da meia-noite local, senão o
+    aviso de sexta à noite falaria dos jogos de sábado.
+    """
+    from zoneinfo import ZoneInfo
+
+    from app.services import lembretes as lembrete_service
+
+    fuso = ZoneInfo(settings.display_timezone)
+    agora = datetime.now(UTC)
+    local = agora.astimezone(fuso)
+    fim_do_dia = (
+        (local + timedelta(days=1))
+        .replace(hour=0, minute=0, second=0, microsecond=0)
+        .astimezone(UTC)
+    )
+
+    criados = 0
+    async with SessionLocal() as session:
+        for pendencia in await lembrete_service.quem_falta_palpitar(
+            session, de=agora, ate=fim_do_dia
+        ):
+            # Uma vez por dia por bolão: o carimbo AAAAMMDD é a chave de
+            # deduplicação, então o job pode rodar de novo sem virar spam.
+            referencia = int(local.strftime("%Y%m%d"))
+            if await notify_service.enqueue(
+                session,
+                membership_id=pendencia.membership.id,
+                template="palpites_do_dia",
+                reference_id=referencia,
+                payload={
+                    "pending": pendencia.quantos,
+                    "pool": pendencia.pool.name,
+                },
+            ):
+                criados += 1
+
+        await session.commit()
+
+    return {"reminders": criados}
+
+
+#: Quanto antes do apito sai a última chamada, e a largura da janela.
+#:
+#: A janela precisa ser maior que o intervalo entre execuções, senão um jogo
+#: cai entre duas passadas e ninguém é avisado. Com o job de cinco em cinco
+#: minutos, dez minutos de janela cobrem com folga — e a deduplicação por jogo
+#: garante que o mesmo aviso não sai duas vezes.
+ULTIMA_CHAMADA = timedelta(minutes=30)
+JANELA_ULTIMA_CHAMADA = timedelta(minutes=10)
+
+
+async def lembrete_ultima_chamada(ctx: dict[str, Any]) -> dict[str, Any]:
+    """Meia hora antes do jogo, para quem ainda não palpitou nele.
+
+    É o aviso que salva o palpite esquecido: depois do apito não há mais o que
+    fazer, e a trava é no banco.
+    """
+    from app.services import lembretes as lembrete_service
+
+    agora = datetime.now(UTC)
+    de = agora + ULTIMA_CHAMADA - JANELA_ULTIMA_CHAMADA / 2
+    ate = agora + ULTIMA_CHAMADA + JANELA_ULTIMA_CHAMADA / 2
+
+    criados = 0
+    async with SessionLocal() as session:
+        for pendencia in await lembrete_service.quem_falta_palpitar(session, de=de, ate=ate):
+            # Por JOGO, não por dia: cada partida esquecida merece a sua última
+            # chamada, e usar o id do jogo como referência impede o repique.
+            for fixture_id in pendencia.fixture_ids:
+                jogo = await session.get(Fixture, fixture_id)
+                if jogo is None:
+                    continue
+                confronto = await _confronto(session, jogo)
+                if await notify_service.enqueue(
+                    session,
+                    membership_id=pendencia.membership.id,
+                    template="ultima_chamada",
+                    reference_id=fixture_id,
+                    payload={
+                        "fixture": confronto,
+                        "pool": pendencia.pool.name,
+                        "minutes": int(ULTIMA_CHAMADA.total_seconds() // 60),
+                    },
+                ):
+                    criados += 1
+
+        await session.commit()
+
+    return {"reminders": criados}
+
+
+async def _confronto(session: AsyncSession, jogo: Fixture) -> str:
+    """ "Palmeiras x Corinthians", para o texto do aviso."""
+    casa = await session.get(Team, jogo.home_team_id)
+    fora = await session.get(Team, jogo.away_team_id)
+    return f"{casa.name if casa else '?'} x {fora.name if fora else '?'}"
+
+
 async def dispatch_notifications(ctx: dict[str, Any]) -> dict[str, int]:
     async with SessionLocal() as session:
         stats = await notify_service.dispatch_pending(session)
@@ -528,6 +636,8 @@ class WorkerSettings:
         sync_live,
         settle_fixtures,
         prediction_reminders,
+        lembrete_do_dia,
+        lembrete_ultima_chamada,
         dispatch_notifications,
         close_predictions,
         close_stale_fixtures,
@@ -548,6 +658,12 @@ class WorkerSettings:
         cron(sync_results, minute={7, 37}),
         cron(settle_fixtures, minute={5, 20, 35, 50}),
         cron(prediction_reminders, minute={10, 40}),
+        # 11:00 UTC = 08:00 em Brasília. O resumo do dia sai de manhã, não de
+        # madrugada: aviso que chega às 3h é aviso que ninguém lê.
+        cron(lembrete_do_dia, hour={11}, minute=0),
+        # De cinco em cinco minutos, com janela de dez: mais estreita e um jogo
+        # cairia entre duas passadas sem que ninguém fosse avisado.
+        cron(lembrete_ultima_chamada, minute=set(range(0, 60, 5))),
         cron(dispatch_notifications, minute=set(range(0, 60, 5))),
         cron(reconcile, hour={6}, minute=0),
         # De hora em hora: fecha jogo que já tem placar mas ficou preso em

@@ -54,7 +54,14 @@ class Settings(BaseSettings):
     # --- Segurança --------------------------------------------------------
     secret_key: str = "troque-esta-chave-em-producao-ela-e-so-para-dev"
     access_token_ttl_minutes: int = 30
-    refresh_token_ttl_days: int = 30
+    #: Quanto tempo o refresh vale sem ser usado.
+    #:
+    #: Cada renovação emite um refresh novo com prazo cheio, então na prática
+    #: isto é "quanto tempo o app pode ficar fechado". Trinta dias deslogava
+    #: quem viaja ou some numa pausa do campeonato; seis meses cobre uma
+    #: temporada inteira. A defesa contra token roubado não é o prazo — é a
+    #: rotação com derrubada de família a cada reuso.
+    refresh_token_ttl_days: int = 180
     # `NoDecode` é obrigatório aqui: sem ele o pydantic-settings tenta fazer
     # JSON-decode do valor vindo do ambiente ANTES de qualquer validator, e
     # `CORS_ORIGINS=http://a,http://b` explode na subida do container.
@@ -80,8 +87,11 @@ class Settings(BaseSettings):
 
     # --- Notificações -----------------------------------------------------
     # `in_app` é o padrão: não depende de serviço externo nenhum.
+    #: `push` entra por padrão e não faz mal onde não serve: o canal só é
+    #: construído se houver chave VAPID, e ela só existe em instalação com
+    #: HTTPS. Na rede local a lista vira `in_app` sozinha.
     notification_channels: Annotated[list[str], NoDecode] = Field(
-        default_factory=lambda: ["in_app"]
+        default_factory=lambda: ["in_app", "push"]
     )
     telegram_bot_token: str = ""
 
@@ -116,6 +126,20 @@ class Settings(BaseSettings):
     # O banco guarda UTC. Este é o fuso usado para renderizar datas ao usuário
     # e para agendar jobs "às 04:00" no horário de Brasília.
     display_timezone: str = "America/Sao_Paulo"
+
+    # --- Web Push -----------------------------------------------------------
+    #: Par de chaves VAPID, gerado uma vez pelo instalador.
+    #:
+    #: Vazio desativa o canal de push por completo, sem erro: a instalação de
+    #: rede local não tem HTTPS e o navegador não deixaria assinar de qualquer
+    #: forma. Quem tem domínio ganha o recurso; quem não tem continua com o
+    #: aviso dentro do app.
+    vapid_public_key: str = ""
+    vapid_private_key: str = ""
+
+    #: Quem é o dono deste servidor, para o serviço de push do navegador saber
+    #: a quem reclamar. `mailto:` ou uma URL.
+    vapid_subject: str = ""
 
     @field_validator("cors_origins", "notification_channels", mode="before")
     @classmethod
