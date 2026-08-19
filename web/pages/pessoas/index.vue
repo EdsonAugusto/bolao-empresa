@@ -25,6 +25,8 @@ interface Conta {
   grupos: string[]
   concedidas: string[]
   revogadas: string[]
+  avatar_url: string | null
+  titulos: number
   pode_gerenciar: boolean
   niveis_possiveis: string[]
   created_at: string
@@ -52,6 +54,87 @@ const busca = ref('')
 const erro = ref('')
 const salvando = ref(0)
 const aberta = ref<number | null>(null)
+const salvandoTitulos = ref(0)
+const redefinindo = ref(0)
+
+/**
+ * A senha recém-gerada, para quem administra copiar.
+ *
+ * Fica só na memória desta tela e some ao recarregar: a plataforma não guarda
+ * senha em claro, e exibi-la duas vezes daria a impressão contrária.
+ */
+const senhaGerada = ref<{ id: number, senha: string } | null>(null)
+
+/** Quem está olhando não pode oferecer o que ele mesmo não tem. */
+const posso = (chave: string) => vocabulario.value?.minhas_permissoes.includes(chave) ?? false
+
+async function chamar(conta: Conta, caminho: string, metodo: string, corpo: object) {
+  erro.value = ''
+  salvando.value = conta.id
+  try {
+    await apiFetch(`/v1/usuarios/${conta.id}${caminho}`, { method: metodo, body: corpo })
+    await refresh()
+    await recarregarGrupos()
+  }
+  catch (falha) {
+    erro.value = (falha as Error).message
+  }
+  finally {
+    salvando.value = 0
+  }
+}
+
+const mudarNivel = (conta: Conta, nivel: string) =>
+  chamar(conta, '/nivel', 'PATCH', { nivel })
+
+/**
+ * Três estados, não dois: conceder, revogar e **voltar ao padrão**.
+ *
+ * A terceira opção falta em quase todo painel de permissão, e sem ela não há
+ * como desfazer um ajuste sem adivinhar o que o nível daria.
+ */
+const mudarPermissao = (conta: Conta, permissao: string, estado: boolean | null) =>
+  chamar(conta, '/permissao', 'PATCH', { permissao, estado })
+
+async function definirTitulos(conta: Conta, valor: string) {
+  const titulos = Number.parseInt(valor, 10)
+  if (!Number.isFinite(titulos) || titulos < 0) return
+
+  salvandoTitulos.value = conta.id
+  try {
+    // `chamar` recarrega a lista inteira, que é o mesmo caminho de nível e
+    // permissão. Atualizar só esta linha na mão criaria um segundo jeito de o
+    // painel refletir o servidor, e dois jeitos divergem.
+    await chamar(conta, '/titulos', 'PATCH', { titulos })
+  }
+  finally {
+    salvandoTitulos.value = 0
+  }
+}
+
+async function redefinirSenha(conta: Conta) {
+  if (!confirm(
+    `Isso encerra todas as sessões de ${conta.display_name} e gera uma senha `
+    + 'nova, que ela terá de trocar ao entrar. Confirmar?',
+  )) return
+
+  erro.value = ''
+  senhaGerada.value = null
+  redefinindo.value = conta.id
+  try {
+    const resposta = await apiFetch<{ detail: string, senha: string | null }>(
+      `/v1/usuarios/${conta.id}/senha`,
+      { method: 'POST', body: {} },
+    )
+    if (resposta.senha) senhaGerada.value = { id: conta.id, senha: resposta.senha }
+  }
+  catch (error_) {
+    erro.value = (error_ as Error).message
+  }
+  finally {
+    redefinindo.value = 0
+  }
+}
 
 const { data: vocabulario } = await useApiData<Vocabulario>(
   'pessoas-vocabulario',
@@ -115,37 +198,6 @@ const ORIGENS: Record<string, string> = {
   revogada: 'tirada só desta pessoa',
   nao: '',
 }
-
-/** Quem está olhando não pode oferecer o que ele mesmo não tem. */
-const posso = (chave: string) => vocabulario.value?.minhas_permissoes.includes(chave) ?? false
-
-async function chamar(conta: Conta, caminho: string, metodo: string, corpo: object) {
-  erro.value = ''
-  salvando.value = conta.id
-  try {
-    await apiFetch(`/v1/usuarios/${conta.id}${caminho}`, { method: metodo, body: corpo })
-    await refresh()
-    await recarregarGrupos()
-  }
-  catch (falha) {
-    erro.value = (falha as Error).message
-  }
-  finally {
-    salvando.value = 0
-  }
-}
-
-const mudarNivel = (conta: Conta, nivel: string) =>
-  chamar(conta, '/nivel', 'PATCH', { nivel })
-
-/**
- * Três estados, não dois: conceder, revogar e **voltar ao padrão**.
- *
- * A terceira opção falta em quase todo painel de permissão, e sem ela não há
- * como desfazer um ajuste sem adivinhar o que o nível daria.
- */
-const mudarPermissao = (conta: Conta, permissao: string, estado: boolean | null) =>
-  chamar(conta, '/permissao', 'PATCH', { permissao, estado })
 
 function alternarGrupo(conta: Conta, slug: string) {
   const atuais = new Set(conta.grupos)
@@ -211,6 +263,12 @@ useHead({ title: 'Pessoas' })
         :class="{ 'conta--inativa': !conta.is_active }"
       >
         <div class="conta__topo">
+          <AvatarPessoa
+            :nome="conta.display_name"
+            :url="conta.avatar_url"
+            :tamanho="36"
+          />
+
           <div class="conta__quem">
             <strong>{{ conta.display_name }}</strong>
             <span class="fraco pequeno">{{ conta.email }}</span>
@@ -275,6 +333,52 @@ useHead({ title: 'Pessoas' })
           </template>
 
           <template v-else>
+            <div class="conta__acoes">
+              <div class="campo campo--inline">
+                <label :for="`titulos-${conta.id}`">Vezes campeão</label>
+                <input
+                  :id="`titulos-${conta.id}`"
+                  type="number"
+                  min="0"
+                  max="99"
+                  :value="conta.titulos"
+                  :disabled="salvandoTitulos === conta.id"
+                  @change="definirTitulos(conta, ($event.target as HTMLInputElement).value)"
+                >
+                <span class="dica">
+                  Conta as edições anteriores à plataforma. Aparece como
+                  conquista no perfil da pessoa.
+                </span>
+              </div>
+
+              <div class="campo campo--inline">
+                <span class="rotulo">Senha</span>
+                <button
+                  type="button"
+                  class="btn pequeno"
+                  :disabled="redefinindo === conta.id"
+                  @click="redefinirSenha(conta)"
+                >
+                  {{ redefinindo === conta.id ? 'redefinindo…' : 'Redefinir senha' }}
+                </button>
+                <span class="dica">
+                  Gera uma senha nova, encerra as sessões abertas e obriga
+                  {{ conta.display_name }} a escolher outra ao entrar.
+                </span>
+              </div>
+            </div>
+
+            <p
+              v-if="senhaGerada && senhaGerada.id === conta.id"
+              class="aviso aviso--ok senhaGerada"
+            >
+              Senha de {{ conta.display_name }}:
+              <code>{{ senhaGerada.senha }}</code>
+              <br>
+              Passe para ela por um canal seguro. Ela aparece só agora — a
+              plataforma não guarda senha em claro.
+            </p>
+
             <div class="campo">
               <label :for="`nivel-${conta.id}`">Nível</label>
               <select
@@ -399,6 +503,40 @@ useHead({ title: 'Pessoas' })
 </template>
 
 <style scoped>
+/* As duas ações que mexem na conta de outra pessoa ficam juntas e no topo do
+   detalhe: são as de consequência imediata (senha) e as que alguém procura
+   sabendo o que quer (títulos). Nível e permissões vêm depois, que é onde se
+   navega explorando. */
+.conta__acoes {
+  display: grid;
+  gap: var(--e3);
+  margin-bottom: var(--e3);
+  padding-bottom: var(--e3);
+  border-bottom: 1px solid var(--borda);
+}
+
+@media (min-width: 640px) {
+  .conta__acoes { grid-template-columns: 1fr 1fr; }
+}
+
+.campo--inline input[type="number"] { max-width: 6rem; }
+
+.campo--inline .rotulo {
+  display: block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+}
+
+/* A senha aparece uma vez só. Fonte de largura fixa para não confundir l com 1
+   nem O com 0 na hora de repassar. */
+.senhaGerada code {
+  font-family: var(--fonte-num);
+  font-size: 1rem;
+  font-weight: 700;
+  user-select: all;
+}
+
 .contas { list-style: none; padding: 0; margin: var(--e4) 0 0; display: grid; gap: var(--e3); }
 .conta--inativa { opacity: 0.72; }
 

@@ -501,9 +501,7 @@ class EspnCalendario:
         jogos.sort(key=lambda jogo: jogo.kickoff_at)
         datas = [jogo.kickoff_at.date() for jogo in jogos]
         return ProviderSnapshot(
-            competition=ProviderCompetition(
-                external_id=chave, name=chave, slug=slugify(chave)
-            ),
+            competition=ProviderCompetition(external_id=chave, name=chave, slug=slugify(chave)),
             season=ProviderSeason(
                 external_id=f"{chave}-{ano}",
                 competition_external_id=chave,

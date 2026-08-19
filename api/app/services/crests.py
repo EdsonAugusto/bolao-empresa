@@ -154,11 +154,7 @@ async def preencher(
                 resultado.preenchidos_local += 1
             continue
 
-        if (
-            buscador is None
-            or resultado.bloqueado
-            or (restantes is not None and restantes <= 0)
-        ):
+        if buscador is None or resultado.bloqueado or (restantes is not None and restantes <= 0):
             resultado.sem_escudo.append(item.name)
             continue
 

@@ -10,17 +10,20 @@ from app.api.deps import CurrentUser, SessionDep
 from app.core import limites
 from app.core.config import settings
 from app.core.security import TokenError
+from app.models import Team, User
 from app.schemas.auth import (
     ChangePasswordRequest,
     LoginRequest,
     RefreshRequest,
     RegisterRequest,
+    TimeDoCoracao,
     TokenPair,
     UserOut,
     UserUpdate,
 )
 from app.schemas.common import Message
 from app.services import auth as auth_service
+from app.services import avatares as avatar_service
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -129,18 +132,54 @@ async def logout(payload: RefreshRequest, session: SessionDep) -> Message:
     return Message(detail="sessão encerrada")
 
 
+async def _com_time(session: SessionDep, user: User) -> UserOut:
+    """Resolve o time do coração para a tela não precisar de outra requisição.
+
+    O modelo não declara a relação de propósito: `users` referenciando `teams`
+    para enfeite não deve arrastar o catálogo inteiro em todo carregamento de
+    sessão. Uma busca por id, só quando há time escolhido, custa menos.
+    """
+    saida = UserOut.model_validate(user)
+    if user.favorite_team_id is not None:
+        time = await session.get(Team, user.favorite_team_id)
+        if time is not None:
+            saida.favorite_team = TimeDoCoracao(
+                id=time.id,
+                name=time.name,
+                short_name=time.short_name,
+                crest_url=time.crest_url,
+            )
+    return saida
+
+
 @router.get("/me", response_model=UserOut)
-async def me(user: CurrentUser) -> UserOut:
-    return UserOut.model_validate(user)
+async def me(user: CurrentUser, session: SessionDep) -> UserOut:
+    return await _com_time(session, user)
 
 
 @router.patch("/me", response_model=UserOut)
 async def update_me(payload: UserUpdate, user: CurrentUser, session: SessionDep) -> UserOut:
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    campos = payload.model_dump(exclude_unset=True)
+
+    # Trocar o avatar apaga o arquivo anterior, se era foto enviada. Sem isso,
+    # quem experimenta cinco avatares deixa cinco arquivos órfãos no disco.
+    anterior = user.avatar_url
+    escolhido = campos.get("favorite_team_id")
+    if escolhido is not None and await session.get(Team, escolhido) is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="não conheço esse time",
+        )
+
+    for field, value in campos.items():
         setattr(user, field, value)
     await session.commit()
     await session.refresh(user)
-    return UserOut.model_validate(user)
+
+    if "avatar_url" in campos and anterior != user.avatar_url:
+        avatar_service.apagar(anterior)
+
+    return await _com_time(session, user)
 
 
 @router.post("/me/password", response_model=Message)

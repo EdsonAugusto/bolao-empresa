@@ -1302,3 +1302,31 @@ async def sync_runs(session: SessionDep, user: SuperUser, limit: int = 25) -> li
         }
         for run in runs
     ]
+
+
+@router.get("/times")
+async def times_para_escolher(
+    session: SessionDep,
+    user: CurrentUser,
+    busca: str = Query(default="", max_length=60, description="Filtra pelo nome"),
+) -> list[dict]:
+    """Times já importados, para a pessoa escolher o do coração no perfil.
+
+    Só os que estão no banco: sem catálogo mundial, sem digitar nome livre. O
+    campo é enfeite de perfil e não vale a pena virar porta de entrada de texto
+    arbitrário exibido na tela dos outros.
+    """
+    consulta = select(Team).order_by(Team.name)
+    if busca.strip():
+        consulta = consulta.where(Team.name.ilike(f"%{busca.strip()}%"))
+
+    return [
+        {
+            "id": time.id,
+            "name": time.name,
+            "short_name": time.short_name,
+            "crest_url": time.crest_url,
+        }
+        # Um catálogo grande não cabe num seletor: quem não achar, filtra.
+        for time in (await session.scalars(consulta.limit(60))).all()
+    ]

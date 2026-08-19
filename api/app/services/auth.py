@@ -301,6 +301,9 @@ async def change_password(
     if not await run_in_threadpool(verify_password, current_password, user.password_hash):
         raise AuthError("senha atual incorreta")
     user.password_hash = await run_in_threadpool(hash_password, new_password)
+    # A obrigação existe porque um terceiro tinha escolhido a senha. Agora quem
+    # escolheu foi a dona da conta, então ela some.
+    user.must_change_password = False
     await revoke_all_sessions(session, user.id)
 
 

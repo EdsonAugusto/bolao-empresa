@@ -29,6 +29,25 @@ class User(IdMixin, TimestampMixin, Base):
     avatar_url: Mapped[str | None] = mapped_column(Text, default=None)
     timezone: Mapped[str] = mapped_column(String(64), default="America/Sao_Paulo", nullable=False)
 
+    # --- Perfil -----------------------------------------------------------
+    #: Time do coração. Só enfeite de perfil: não entra em pontuação, em
+    #: sorteio nem em nada que decida resultado — senão viraria vantagem.
+    favorite_team_id: Mapped[int | None] = mapped_column(
+        ForeignKey("teams.id", ondelete="SET NULL"), default=None
+    )
+
+    #: Quantas vezes a pessoa foi campeã, incluindo as edições anteriores à
+    #: plataforma. É um número informado por quem administra, não apurado: o
+    #: bolão existia antes daqui e esse histórico não está em lugar nenhum.
+    titulos: Mapped[int] = mapped_column(default=0, nullable=False)
+
+    #: Obriga a trocar a senha no próximo acesso.
+    #:
+    #: Ligado quando quem administra redefine a senha de outra pessoa: quem
+    #: escolheu a senha foi um terceiro, e ela não pode continuar valendo
+    #: depois que a dona entrar.
+    must_change_password: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     #: Posição na hierarquia da plataforma. Ver ``app.core.permissoes``.
@@ -139,9 +158,7 @@ class PushSubscription(IdMixin, TimestampMixin, Base):
     """
 
     __tablename__ = "push_subscriptions"
-    __table_args__ = (
-        UniqueConstraint("endpoint", name="uq_push_subscriptions_endpoint"),
-    )
+    __table_args__ = (UniqueConstraint("endpoint", name="uq_push_subscriptions_endpoint"),)
 
     user_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True

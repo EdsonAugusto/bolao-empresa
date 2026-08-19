@@ -5,6 +5,15 @@ export interface User {
   email: string
   display_name: string
   avatar_url: string | null
+  favorite_team_id: number | null
+  favorite_team: {
+    id: number
+    name: string
+    short_name: string | null
+    crest_url: string | null
+  } | null
+  titulos: number
+  must_change_password: boolean
   timezone: string
   is_superuser: boolean
   notify_in_app: boolean

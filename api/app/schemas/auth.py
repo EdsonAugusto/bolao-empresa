@@ -71,12 +71,28 @@ class ChangePasswordRequest(BaseModel):
     new_password: str = Field(min_length=MIN_PASSWORD_LENGTH, max_length=128)
 
 
+class TimeDoCoracao(BaseModel):
+    """O time, resolvido, para a tela não precisar de uma segunda requisição."""
+
+    id: int
+    name: str
+    short_name: str | None = None
+    crest_url: str | None = None
+
+
 class UserOut(ORMModel):
     id: int
     email: str
     display_name: str
     avatar_url: str | None = None
     timezone: str
+
+    favorite_team_id: int | None = None
+    favorite_team: TimeDoCoracao | None = None
+    """Preenchido pela API, não vem do ORM — o modelo não tem a relação."""
+
+    titulos: int = 0
+    must_change_password: bool = False
     is_superuser: bool
     notify_in_app: bool
     notify_telegram: bool
@@ -90,6 +106,25 @@ class UserUpdate(BaseModel):
     display_name: str | None = Field(default=None, min_length=2, max_length=80)
     avatar_url: str | None = None
     timezone: str | None = None
+    favorite_team_id: int | None = None
+
+    @field_validator("avatar_url")
+    @classmethod
+    def _avatar_conhecido(cls, valor: str | None) -> str | None:
+        """Só avatar do catálogo ou foto que nós gravamos.
+
+        Este campo chega do cliente e vai para um `<img src>` na tela de todo
+        mundo. Sem esta trava dava para apontar para um endereço de fora — um
+        pixel que registra quem abriu a lista de pessoas — ou para uma URL
+        `javascript:`.
+        """
+        from app.services.avatares import AvatarInvalido, validar
+
+        try:
+            return validar(valor)
+        except AvatarInvalido as exc:
+            raise ValueError(str(exc)) from exc
+
     notify_in_app: bool | None = None
     notify_telegram: bool | None = None
     telegram_chat_id: str | None = Field(default=None, max_length=64)

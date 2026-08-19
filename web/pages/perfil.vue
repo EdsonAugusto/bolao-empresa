@@ -1,7 +1,7 @@
 <script setup lang="ts">
 definePageMeta({ middleware: 'auth' })
 
-const { user, updateProfile, logout } = useAuth()
+const { user, updateProfile, logout, loadMe } = useAuth()
 const {
   estado: estadoPush,
   ocupado: mexendoNoPush,
@@ -13,9 +13,158 @@ const {
 
 // Só no navegador: `Notification` e `navigator.serviceWorker` não existem no
 // servidor, e o estado depende de uma pergunta ao próprio aparelho.
-onMounted(() => {
+interface Avatar { id: string, url: string }
+interface TimeBusca {
+  id: number
+  name: string
+  short_name: string | null
+  crest_url: string | null
+}
+
+const avatares = ref<Avatar[]>([])
+const trocandoAvatar = ref(false)
+const arquivoAvatar = ref<HTMLInputElement | null>(null)
+
+const buscaTime = ref('')
+const timesAchados = ref<TimeBusca[]>([])
+const procurandoTime = ref(false)
+
+const senhaAtual = ref('')
+const senhaNova = ref('')
+const senhaConfirma = ref('')
+const trocandoSenha = ref(false)
+const mensagemSenha = ref('')
+const erroSenha = ref('')
+
+const precisaTrocarSenha = computed(() => Boolean(user.value?.must_change_password))
+
+onMounted(async () => {
   void verificarPush()
+  try {
+    avatares.value = await apiFetch<Avatar[]>('/v1/usuarios/avatares')
+  }
+  catch {
+    // Sem catálogo a pessoa ainda pode enviar a própria foto. Um seletor vazio
+    // é melhor do que a tela de perfil inteira falhar por causa de um enfeite.
+    avatares.value = []
+  }
 })
+
+async function escolherAvatar(url: string | null) {
+  erro.value = ''
+  mensagem.value = ''
+  trocandoAvatar.value = true
+  try {
+    await updateProfile({ avatar_url: url })
+    mensagem.value = url ? 'Avatar atualizado.' : 'Foto removida.'
+  }
+  catch (error_) {
+    erro.value = (error_ as Error).message
+  }
+  finally {
+    trocandoAvatar.value = false
+  }
+}
+
+async function enviarFoto(evento: Event) {
+  const alvo = evento.target as HTMLInputElement
+  const arquivo = alvo.files?.[0]
+  if (!arquivo) return
+
+  erro.value = ''
+  mensagem.value = ''
+  trocandoAvatar.value = true
+  try {
+    const corpo = new FormData()
+    corpo.append('file', arquivo)
+    await apiFetch('/v1/usuarios/avatar', { method: 'POST', body: corpo })
+    // O endereço da foto muda no servidor; recarregar a sessão é o que faz a
+    // imagem nova aparecer sem a pessoa recarregar a página.
+    await loadMe()
+    mensagem.value = 'Foto de perfil atualizada.'
+  }
+  catch (error_) {
+    erro.value = (error_ as Error).message
+  }
+  finally {
+    trocandoAvatar.value = false
+    // Zera o input: sem isso, escolher o MESMO arquivo de novo não dispara
+    // `change` e parece que o botão parou de funcionar.
+    alvo.value = ''
+  }
+}
+
+let buscaEmEspera: ReturnType<typeof setTimeout> | null = null
+
+function procurarTime() {
+  if (buscaEmEspera) clearTimeout(buscaEmEspera)
+  // Espera a pessoa parar de digitar: uma requisição por tecla faria dezenas
+  // de consultas para uma busca só.
+  buscaEmEspera = setTimeout(async () => {
+    const termo = buscaTime.value.trim()
+    if (termo.length < 2) {
+      timesAchados.value = []
+      return
+    }
+    procurandoTime.value = true
+    try {
+      timesAchados.value = await apiFetch<TimeBusca[]>(
+        `/v1/catalog/times?busca=${encodeURIComponent(termo)}`,
+      )
+    }
+    catch {
+      timesAchados.value = []
+    }
+    finally {
+      procurandoTime.value = false
+    }
+  }, 300)
+}
+
+async function escolherTime(id: number | null) {
+  erro.value = ''
+  mensagem.value = ''
+  try {
+    await updateProfile({ favorite_team_id: id })
+    buscaTime.value = ''
+    timesAchados.value = []
+    mensagem.value = id ? 'Time do coração atualizado.' : 'Time removido do perfil.'
+  }
+  catch (error_) {
+    erro.value = (error_ as Error).message
+  }
+}
+
+async function trocarSenha() {
+  erroSenha.value = ''
+  mensagemSenha.value = ''
+
+  if (senhaNova.value !== senhaConfirma.value) {
+    erroSenha.value = 'A confirmação não confere com a senha nova.'
+    return
+  }
+
+  trocandoSenha.value = true
+  try {
+    await apiFetch('/v1/auth/me/password', {
+      method: 'POST',
+      body: { current_password: senhaAtual.value, new_password: senhaNova.value },
+    })
+    senhaAtual.value = ''
+    senhaNova.value = ''
+    senhaConfirma.value = ''
+    // Trocar a senha derruba as outras sessões no servidor; recarregar aqui é
+    // o que desarma o aviso de "troque sua senha" sem pedir F5.
+    await loadMe()
+    mensagemSenha.value = 'Senha alterada. Os outros aparelhos vão pedir para entrar de novo.'
+  }
+  catch (error_) {
+    erroSenha.value = (error_ as Error).message
+  }
+  finally {
+    trocandoSenha.value = false
+  }
+}
 
 const nome = ref('')
 const fuso = ref('America/Sao_Paulo')
@@ -75,6 +224,266 @@ async function excluirConta() {
     <h1>Perfil</h1>
 
     <InstalarApp />
+
+    <div
+      v-if="precisaTrocarSenha"
+      class="card avisoSenha"
+    >
+      <strong>Escolha uma senha sua</strong>
+      <p
+        class="pequeno"
+        style="margin: 0.3rem 0 0"
+      >
+        A senha atual foi definida por quem administra a plataforma — ou seja,
+        outra pessoa a conhece. Troque abaixo para a conta voltar a ser só sua.
+      </p>
+    </div>
+
+    <div class="card identidade">
+      <AvatarPessoa
+        :nome="user?.display_name ?? ''"
+        :url="user?.avatar_url"
+        :tamanho="96"
+      />
+
+      <div class="identidade__texto">
+        <h2 style="margin: 0">
+          {{ user?.display_name }}
+        </h2>
+
+        <div
+          v-if="user?.favorite_team"
+          class="torce"
+        >
+          <img
+            v-if="user.favorite_team.crest_url"
+            :src="user.favorite_team.crest_url"
+            alt=""
+            width="22"
+            height="22"
+          >
+          <span>Torce pelo <strong>{{ user.favorite_team.name }}</strong></span>
+        </div>
+
+        <div
+          v-if="(user?.titulos ?? 0) > 0"
+          class="conquista"
+        >
+          <span aria-hidden="true">🏆</span>
+          <span>
+            <strong>{{ user?.titulos }}</strong>
+            {{ user?.titulos === 1 ? 'vez campeão' : 'vezes campeão' }} do bolão
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Sua foto</h2>
+      <p class="fraco pequeno">
+        Envie uma imagem ou escolha um dos avatares. Ela aparece no ranking e na
+        lista de participantes.
+      </p>
+
+      <div
+        class="linha"
+        style="gap: var(--e2); flex-wrap: wrap"
+      >
+        <button
+          type="button"
+          class="btn pequeno"
+          :disabled="trocandoAvatar"
+          @click="arquivoAvatar?.click()"
+        >
+          {{ trocandoAvatar ? 'enviando…' : 'Enviar imagem' }}
+        </button>
+        <button
+          v-if="user?.avatar_url"
+          type="button"
+          class="btn pequeno btn--fantasma"
+          :disabled="trocandoAvatar"
+          @click="escolherAvatar(null)"
+        >
+          Remover
+        </button>
+        <input
+          ref="arquivoAvatar"
+          type="file"
+          accept="image/png,image/jpeg,image/gif,image/webp"
+          hidden
+          @change="enviarFoto"
+        >
+      </div>
+
+      <div
+        v-if="avatares.length"
+        class="avatares"
+      >
+        <button
+          v-for="avatar in avatares"
+          :key="avatar.id"
+          type="button"
+          class="avatares__opcao"
+          :class="{ 'avatares__opcao--ativo': user?.avatar_url === avatar.url }"
+          :disabled="trocandoAvatar"
+          :aria-label="`Usar o avatar ${avatar.id}`"
+          :aria-pressed="user?.avatar_url === avatar.url"
+          @click="escolherAvatar(avatar.url)"
+        >
+          <img
+            :src="avatar.url"
+            alt=""
+            width="52"
+            height="52"
+          >
+        </button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Time do coração</h2>
+      <p class="fraco pequeno">
+        Aparece no seu perfil. Não influencia palpite, pontuação nem desempate.
+      </p>
+
+      <div
+        v-if="user?.favorite_team"
+        class="linha"
+        style="gap: var(--e2); margin-bottom: var(--e2)"
+      >
+        <img
+          v-if="user.favorite_team.crest_url"
+          :src="user.favorite_team.crest_url"
+          alt=""
+          width="26"
+          height="26"
+        >
+        <strong>{{ user.favorite_team.name }}</strong>
+        <button
+          type="button"
+          class="btn pequeno btn--fantasma empurra"
+          @click="escolherTime(null)"
+        >
+          Tirar
+        </button>
+      </div>
+
+      <div class="campo">
+        <label for="busca-time">Procurar time</label>
+        <input
+          id="busca-time"
+          v-model="buscaTime"
+          placeholder="Digite pelo menos duas letras"
+          @input="procurarTime"
+        >
+        <span class="dica">
+          Só os times dos campeonatos já importados aparecem aqui.
+        </span>
+      </div>
+
+      <p
+        v-if="procurandoTime"
+        class="fraco pequeno"
+      >
+        procurando…
+      </p>
+
+      <ul
+        v-else-if="timesAchados.length"
+        class="times"
+      >
+        <li
+          v-for="time in timesAchados"
+          :key="time.id"
+        >
+          <button
+            type="button"
+            class="times__opcao"
+            @click="escolherTime(time.id)"
+          >
+            <img
+              v-if="time.crest_url"
+              :src="time.crest_url"
+              alt=""
+              width="22"
+              height="22"
+            >
+            <span>{{ time.name }}</span>
+          </button>
+        </li>
+      </ul>
+
+      <p
+        v-else-if="buscaTime.trim().length >= 2"
+        class="fraco pequeno"
+      >
+        Nenhum time com esse nome entre os campeonatos importados.
+      </p>
+    </div>
+
+    <form
+      class="card"
+      @submit.prevent="trocarSenha"
+    >
+      <h2>Trocar a senha</h2>
+
+      <div class="campo">
+        <label for="senha-atual">Senha atual</label>
+        <input
+          id="senha-atual"
+          v-model="senhaAtual"
+          type="password"
+          autocomplete="current-password"
+          required
+        >
+      </div>
+
+      <div class="campo">
+        <label for="senha-nova">Senha nova</label>
+        <input
+          id="senha-nova"
+          v-model="senhaNova"
+          type="password"
+          autocomplete="new-password"
+          minlength="10"
+          required
+        >
+        <span class="dica">Pelo menos 10 caracteres.</span>
+      </div>
+
+      <div class="campo">
+        <label for="senha-confirma">Repita a senha nova</label>
+        <input
+          id="senha-confirma"
+          v-model="senhaConfirma"
+          type="password"
+          autocomplete="new-password"
+          minlength="10"
+          required
+        >
+      </div>
+
+      <p
+        v-if="erroSenha"
+        class="aviso aviso--erro"
+      >
+        {{ erroSenha }}
+      </p>
+      <p
+        v-if="mensagemSenha"
+        class="aviso aviso--ok"
+      >
+        {{ mensagemSenha }}
+      </p>
+
+      <button
+        type="submit"
+        class="btn"
+        :disabled="trocandoSenha"
+      >
+        {{ trocandoSenha ? 'trocando…' : 'Trocar senha' }}
+      </button>
+    </form>
 
     <form
       class="card"
@@ -271,6 +680,98 @@ async function excluirConta() {
 </template>
 
 <style scoped>
+/* O aviso de senha imposta usa a cor de alerta, não a de erro: nada quebrou,
+   mas a conta não é só da pessoa até ela trocar. */
+.avisoSenha {
+  border-color: var(--aviso);
+  border-left-width: 4px;
+}
+
+.identidade {
+  display: flex;
+  align-items: center;
+  gap: var(--e3);
+  flex-wrap: wrap;
+}
+
+.identidade__texto {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.torce,
+.conquista {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.92rem;
+}
+
+.torce img { border-radius: 4px; }
+
+/* A conquista é o único elemento do perfil que celebra alguma coisa. Ganha
+   fundo próprio para não se perder entre os dados de cadastro. */
+.conquista {
+  align-self: flex-start;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  background: var(--superficie-3);
+}
+
+.avatares {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--e2);
+  margin-top: var(--e3);
+}
+
+.avatares__opcao {
+  padding: 3px;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  background: none;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.avatares__opcao:hover:not(:disabled) { border-color: var(--borda-forte); }
+.avatares__opcao--ativo { border-color: var(--verde); }
+.avatares__opcao:disabled { opacity: 0.5; cursor: default; }
+.avatares__opcao img { border-radius: 50%; display: block; }
+
+.times {
+  list-style: none;
+  margin: var(--e2) 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* Sessenta resultados não cabem na tela; rolar aqui é melhor do que empurrar
+     o resto do perfil para baixo. */
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.times__opcao {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.45rem 0.6rem;
+  border: none;
+  border-radius: var(--raio-p);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.times__opcao:hover { background: var(--superficie-2); }
+.times__opcao img { border-radius: 4px; flex-shrink: 0; }
+
 /* Cada aparelho se inscreve sozinho, então isto é um estado do aparelho e não
    uma preferência da conta — por isso o bloco tem cara própria, separado das
    caixas de seleção que o botão Salvar controla. */

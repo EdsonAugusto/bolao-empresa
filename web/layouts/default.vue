@@ -118,10 +118,6 @@ onMounted(() => {
       v-if="isLoggedIn"
       v-model="painelAberto"
     />
-
-    <footer class="rodape">
-      Plataforma de entretenimento entre amigos. Não há aposta com dinheiro real.
-    </footer>
   </div>
 </template>
 
@@ -267,15 +263,6 @@ onMounted(() => {
 
 .relatar:hover { transform: scale(1.06); }
 .relatar:focus-visible { outline: 2px solid var(--verde-claro); outline-offset: 2px; }
-
-.rodape {
-  padding: 1rem calc(1rem + env(safe-area-inset-right, 0px))
-    calc(1rem + env(safe-area-inset-bottom, 0px)) calc(1rem + env(safe-area-inset-left, 0px));
-  text-align: center;
-  font-size: 0.8rem;
-  color: var(--texto-fraco);
-  border-top: 1px solid var(--borda);
-}
 
 @media (width <= 700px) {
   .hamburguer { display: block; }

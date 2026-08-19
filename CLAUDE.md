@@ -444,3 +444,21 @@ Ver `docs/PERMISSOES.md`. O que não pode ser reintroduzido:
     `members_without_prediction` responde QUEM avisar, não QUANTO falta a cada
     um. Dizer "faltam 3" a quem já fez dois é o tipo de erro que ensina a pessoa
     a ignorar o aviso — e aí o recurso inteiro deixa de servir.
+79. **`avatar_url` chega do cliente e vira `<img src>` na tela de todo mundo.**
+    Sem validação dava para apontar para fora — um pixel que registra quem
+    abriu a lista de pessoas — ou para `javascript:`. Só passa avatar do
+    catálogo ou arquivo que nós gravamos, e a validação fica no schema, onde
+    todo caminho de escrita passa.
+80. **A imagem Docker da API não leva `web/`.** Ler o índice dos avatares de
+    `web/public/` funcionava em desenvolvimento e falharia no container. A
+    lista fica em `app/data/avatares.py`, dentro do que a API empacota, e um
+    teste cobra que ela e os arquivos gerados não divirjam.
+81. **Senha redefinida por quem administra não pode continuar valendo.** Quem
+    redefiniu conhece a senha; sem `must_change_password` o socorro "perdi
+    minha senha" viraria conta compartilhada sem ninguém perceber. A marca é
+    desarmada quando a dona escolhe a própria, e um middleware global desvia a
+    navegação até lá — senão bastaria digitar outro endereço.
+82. **Cor derivada de nome não pode usar `Math.random()`.** As iniciais do
+    avatar são renderizadas no servidor e no navegador; cor diferente nos dois
+    lados quebra a hidratação e a tela fica bonita e morta. A cor sai de uma
+    soma sobre os caracteres do nome.

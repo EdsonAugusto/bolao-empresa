@@ -105,7 +105,6 @@ async function copiar(url: string) {
         <dt>Bolões</dt><dd class="num">
           {{ info.pools }}
         </dd>
-        <dt>Dinheiro real</dt><dd>não — plataforma de entretenimento</dd>
       </dl>
     </div>
 

@@ -9,9 +9,11 @@ divergirem a tela vai oferecer um botão que a API recusa.
 
 from __future__ import annotations
 
+import secrets
 from datetime import datetime
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 
@@ -23,8 +25,12 @@ from app.core.permissoes import (
     escada,
     niveis_que_pode_conceder,
 )
+from app.core.security import hash_password
+from app.data.avatares import catalogo as catalogo_de_avatares
 from app.models import PermissionGroup, User
 from app.schemas.common import Message
+from app.services import auth as auth_service
+from app.services import avatares as avatar_service
 from app.services import permissoes as permissao_service
 
 router = APIRouter(prefix="/usuarios", tags=["pessoas"])
@@ -44,6 +50,8 @@ class ContaOut(BaseModel):
     nivel: str
     nivel_rotulo: str
     is_active: bool
+    avatar_url: str | None = None
+    titulos: int = 0
     permissoes: list[str]
     grupos: list[str]
     concedidas: list[str]
@@ -142,6 +150,8 @@ async def _conta_out(
         nivel=str(acesso.nivel),
         nivel_rotulo=ROTULOS[acesso.nivel][0],
         is_active=alvo.is_active,
+        avatar_url=alvo.avatar_url,
+        titulos=alvo.titulos,
         permissoes=sorted(str(item) for item in acesso.permissoes),
         grupos=list(acesso.grupos),
         concedidas=sorted(str(item) for item in acesso.concedidas),
@@ -394,3 +404,174 @@ async def apagar_grupo(grupo_id: int, session: SessionDep, user: PodeGrupos) -> 
 
     await session.commit()
     return Message(detail=f'grupo "{grupo.name}" apagado')
+
+
+# ---------------------------------------------------------------------------
+# Foto de perfil
+# ---------------------------------------------------------------------------
+
+
+class AvatarOut(BaseModel):
+    id: str
+    url: str
+
+
+@router.get("/avatares", response_model=list[AvatarOut])
+async def avatares_prontos(user: CurrentUser) -> list[AvatarOut]:
+    """Os avatares desenhados pela plataforma, para o seletor do perfil."""
+    return [AvatarOut(**item) for item in catalogo_de_avatares()]
+
+
+@router.post("/avatar", response_model=Message)
+async def enviar_avatar(
+    session: SessionDep,
+    user: CurrentUser,
+    file: Annotated[UploadFile, File(description="Imagem de perfil")],
+) -> Message:
+    """Troca a foto de perfil por uma imagem enviada.
+
+    O tipo sai da assinatura do arquivo, nunca do ``Content-Type`` que o
+    navegador mandou — é entrada do cliente como qualquer outra, e confiar nela
+    é como upload de imagem vira XSS armazenado.
+
+    A foto anterior é apagada do disco: sem isso, cada troca deixaria a antiga
+    ali para sempre, e um grupo grande enche o disco de retratos que ninguém vê.
+    """
+    dados = await file.read(avatar_service.MAX_BYTES + 1)
+    try:
+        nome, _formato = avatar_service.gravar(dados)
+    except avatar_service.AvatarInvalido as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
+    anterior = user.avatar_url
+    user.avatar_url = f"{avatar_service.PREFIXO_ENVIADO}{nome}"
+    await session.commit()
+
+    # Depois do commit: se a gravação falhar, a foto velha ainda é a válida.
+    avatar_service.apagar(anterior)
+    return Message(detail="foto de perfil atualizada")
+
+
+@router.get("/avatar/{nome}")
+async def ver_avatar(nome: str, user: CurrentUser) -> Response:
+    """Serve uma foto enviada.
+
+    Exige sessão porque a foto é de quem divide bolão, não da internet — e
+    responde com `nosniff` mais uma CSP de sandbox, pelo mesmo motivo do anexo
+    de relato: um arquivo que o navegador resolva interpretar como HTML rodaria
+    na origem da plataforma.
+    """
+    try:
+        caminho = avatar_service.caminho_de(nome)
+    except avatar_service.AvatarInvalido as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="não achei") from exc
+
+    if not caminho.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="não achei")
+
+    tipos = {"png": "image/png", "jpg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}
+    return Response(
+        content=caminho.read_bytes(),
+        media_type=tipos.get(caminho.suffix.lstrip("."), "application/octet-stream"),
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": "sandbox; default-src 'none'",
+            # O nome tem UUID, então o conteúdo nunca muda para o mesmo nome.
+            "Cache-Control": "private, max-age=86400",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# O que quem administra pode fazer na conta de outra pessoa
+# ---------------------------------------------------------------------------
+
+
+class SenhaIn(BaseModel):
+    nova_senha: str | None = Field(
+        default=None,
+        min_length=10,
+        max_length=128,
+        description="Em branco, uma senha forte é gerada e devolvida uma vez.",
+    )
+
+
+class SenhaOut(BaseModel):
+    detail: str
+    senha: str | None = None
+    """Só quando foi gerada aqui. Aparece uma vez e não é guardada em claro."""
+
+
+@router.post("/{user_id}/senha", response_model=SenhaOut)
+async def redefinir_senha(
+    user_id: int, payload: SenhaIn, session: SessionDep, user: PodeGerenciar
+) -> SenhaOut:
+    """Redefine a senha de outra pessoa.
+
+    Quem faz isso passa a conhecer a senha da conta, e por isso a conta nasce
+    obrigada a trocá-la no próximo acesso: senha escolhida por um terceiro não
+    pode continuar valendo depois que a dona entrar.
+
+    Todas as sessões abertas daquela conta caem junto. Se a redefinição foi
+    porque alguém perdeu o acesso, deixar as sessões vivas não resolveria nada;
+    se foi porque alguém entrou indevidamente, deixá-las vivas manteria o
+    invasor lá dentro.
+    """
+    alvo = await _alvo(session, user_id)
+
+    motivo = permissao_service.motivo_para_nao_gerenciar(
+        de_quem=await permissao_service.acesso_de(session, user),
+        quem_id=user.id,
+        do_alvo=await permissao_service.acesso_de(session, alvo),
+        alvo_id=alvo.id,
+        nome_do_alvo=alvo.display_name,
+    )
+    if motivo:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=motivo)
+
+    senha = payload.nova_senha or secrets.token_urlsafe(12)
+    alvo.password_hash = hash_password(senha)
+    alvo.must_change_password = True
+    await auth_service.revoke_all_sessions(session, alvo.id)
+    await session.commit()
+
+    return SenhaOut(
+        detail=f"senha de {alvo.display_name} redefinida; será pedida a troca no próximo acesso",
+        senha=senha if payload.nova_senha is None else None,
+    )
+
+
+class TitulosIn(BaseModel):
+    titulos: int = Field(ge=0, le=99)
+
+
+@router.patch("/{user_id}/titulos", response_model=ContaOut)
+async def definir_titulos(
+    user_id: int, payload: TitulosIn, session: SessionDep, user: PodeGerenciar
+) -> ContaOut:
+    """Registra quantas vezes a pessoa foi campeã.
+
+    Informado, não apurado: o bolão do grupo é mais antigo que a plataforma e
+    esse histórico não está em banco nenhum. A plataforma apura o que acontece
+    dentro dela; isto é a memória do que veio antes.
+    """
+    alvo = await _alvo(session, user_id)
+
+    motivo = permissao_service.motivo_para_nao_gerenciar(
+        de_quem=await permissao_service.acesso_de(session, user),
+        quem_id=user.id,
+        do_alvo=await permissao_service.acesso_de(session, alvo),
+        alvo_id=alvo.id,
+        nome_do_alvo=alvo.display_name,
+    )
+    if motivo:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=motivo)
+
+    alvo.titulos = payload.titulos
+    await session.commit()
+    await session.refresh(alvo)
+    return await _conta_out(
+        session, alvo, quem=await permissao_service.acesso_de(session, user), quem_id=user.id
+    )

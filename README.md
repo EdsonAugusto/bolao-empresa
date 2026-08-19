@@ -4,8 +4,7 @@ Bolão de futebol entre amigos, rodando na sua própria rede. Você cria o bolã
 manda o código para o grupo, todo mundo palpita os placares e o ranking se
 atualiza sozinho conforme os jogos são apurados.
 
-**Custo zero. Sem cobrança, sem assinatura, sem serviço externo obrigatório.
-Sem aposta com dinheiro real.**
+**Custo zero. Sem cobrança, sem assinatura, sem serviço externo obrigatório.**
 
 ---
 
@@ -464,8 +463,3 @@ docs/                 roadmap e decisões de arquitetura
 - `tests/test_api.py` — **teste de vazamento por endpoint**.
 - `tests/test_settlement.py` — rodada real com 10 participantes e 5 jogos,
   conferida contra uma tabela escrita à mão; correção de placar; idempotência.
-
-## Aviso
-
-Plataforma de entretenimento entre amigos. Não movimenta dinheiro e não opera
-apostas. Ver `docs/DECISOES.md`.

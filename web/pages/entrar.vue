@@ -68,10 +68,10 @@ async function enviar() {
   <div class="janela">
     <div class="card cartao">
       <img
-        src="/marca-96.png"
-        alt=""
-        width="52"
-        height="52"
+        src="/icone-192.png"
+        alt="Bolão dos 3 Patetas"
+        width="148"
+        height="148"
         class="simbolo"
       >
 
@@ -243,11 +243,17 @@ async function enviar() {
   to { opacity: 1; transform: none; }
 }
 
+/* O brasão tem texto dentro — a 52px não dava para ler nem entender o desenho.
+   A 148px ele se lê, e como é redondo a moldura acompanha em vez de recortar
+   os cantos de um quadrado que não existe. A sombra fica circular pelo mesmo
+   motivo. */
 .simbolo {
   display: block;
-  margin: 0 auto 0.85rem;
-  border-radius: 12px;
-  box-shadow: 0 6px 22px rgb(16 113 74 / 45%);
+  width: min(148px, 42vw);
+  height: auto;
+  margin: 0 auto 1rem;
+  border-radius: 50%;
+  box-shadow: 0 8px 28px rgb(0 0 0 / 45%);
 }
 
 .janela h1 { text-align: center; margin-bottom: 0.2rem; }
