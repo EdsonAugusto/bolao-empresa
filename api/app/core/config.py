@@ -53,7 +53,18 @@ class Settings(BaseSettings):
 
     # --- Segurança --------------------------------------------------------
     secret_key: str = "troque-esta-chave-em-producao-ela-e-so-para-dev"
-    access_token_ttl_minutes: int = 30
+    #: Quanto o token de acesso vale antes de precisar ser renovado.
+    #:
+    #: Trinta minutos obrigavam uma renovação em toda abertura do aplicativo —
+    #: ninguém abre um bolão de meia em meia hora. E cada renovação é uma
+    #: chance de falhar: rede oscilando, resposta perdida, rotação lida como
+    #: reuso. Doze horas fazem o caminho comum não rotacionar nada.
+    #:
+    #: O prazo não é a defesa contra token roubado — a defesa é a rotação do
+    #: refresh com derrubada de família. Este número é a troca entre quantas
+    #: vezes a renovação pode dar errado e quanto tempo um acesso copiado
+    #: sobrevive.
+    access_token_ttl_minutes: int = 720
     #: Quanto tempo o refresh vale sem ser usado.
     #:
     #: Cada renovação emite um refresh novo com prazo cheio, então na prática

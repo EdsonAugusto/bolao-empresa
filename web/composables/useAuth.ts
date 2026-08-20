@@ -50,9 +50,18 @@ export function useAuth() {
       user.value = await apiFetch<User>('/v1/auth/me')
     }
     catch {
+      // Não carregar a sessão NÃO é o mesmo que perdê-la.
+      //
+      // Esta função roda a cada abertura do app, inclusive no servidor. Apagar
+      // os cookies aqui — que era o que acontecia — transformava qualquer
+      // tropeço numa exigência de digitar e-mail e senha de novo: celular sem
+      // sinal, API reiniciando, uma renovação que não voltou a tempo. E como o
+      // apagamento era silencioso, não havia nada explicando por quê.
+      //
+      // Quem encerra sessão é o botão de sair, ou o servidor recusando o
+      // refresh (401/403), que `rotateRefresh` já trata. Aqui só o estado de
+      // tela é zerado; os tokens ficam para a próxima tentativa.
       user.value = null
-      access.value = null
-      refresh.value = null
     }
     return user.value
   }

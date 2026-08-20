@@ -125,6 +125,16 @@ export function useTokens() {
   // local o endereço é `http://192.168.x.x` e um cookie `Secure` simplesmente
   // não é gravado — ninguém entraria. Com domínio e HTTPS ele passa a valer, e
   // aí impede que a sessão vaze num acesso http:// acidental.
+  //
+  // O protocolo é lido dos DOIS lados, e não só do navegador. Antes o servidor
+  // assumia `false`, então uma renovação durante a renderização reescrevia o
+  // cookie sem `Secure` por cima do que o navegador tinha gravado com — duas
+  // versões do mesmo cookie, com atributos diferentes, dependendo de quem
+  // escreveu por último.
+  const protocolo = import.meta.client
+    ? window.location.protocol
+    : useRequestURL().protocol
+
   const comum = {
     sameSite: 'lax' as const,
     // Cento e oitenta dias, o mesmo prazo do refresh no servidor.
@@ -134,7 +144,7 @@ export function useTokens() {
     // decide é o tempo MÁXIMO de app fechado — e trinta dias deslogava quem
     // viajava ou sumia numa pausa do campeonato.
     maxAge: 60 * 60 * 24 * 180,
-    secure: import.meta.client ? window.location.protocol === 'https:' : false,
+    secure: protocolo === 'https:',
     path: '/',
   }
   const access = useCookie<string | null>('bolao_access', comum)
@@ -183,8 +193,7 @@ async function rotateRefresh(): Promise<string | null> {
         // Falha de transporte vem com status 0. Aí os tokens ficam onde estão
         // e a próxima tentativa, com rede, funciona. Só 401 e 403 — que são o
         // servidor recusando o refresh — encerram de fato.
-        const status = toApiError(erro).status
-        if (status === 401 || status === 403) {
+        if (credencialFoiRecusada(toApiError(erro).status)) {
           access.value = null
           refresh.value = null
         }

@@ -358,7 +358,7 @@ REDIS_DB=0
 
 # --- Segurança -------------------------------------------------------------
 SECRET_KEY=$SECRET_KEY
-ACCESS_TOKEN_TTL_MINUTES=${TTL_ATUAL:-30}
+ACCESS_TOKEN_TTL_MINUTES=${TTL_ATUAL:-720}
 REFRESH_TOKEN_TTL_DAYS=30
 CORS_ORIGINS=https://$DOMINIO
 # Fora da rede local esta opção precisa estar desligada: com ela ligada a API

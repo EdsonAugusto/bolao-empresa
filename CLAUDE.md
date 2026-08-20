@@ -462,3 +462,24 @@ Ver `docs/PERMISSOES.md`. O que não pode ser reintroduzido:
     avatar são renderizadas no servidor e no navegador; cor diferente nos dois
     lados quebra a hidratação e a tela fica bonita e morta. A cor sai de uma
     soma sobre os caracteres do nome.
+83. **A regra "isto encerra a sessão?" mora em `utils/sessao.ts`, num lugar
+    só.** Ela já foi escrita errado duas vezes, em dois arquivos, e das duas o
+    sintoma foi o mesmo: o app instalado abrindo pedindo e-mail e senha, toda
+    vez, sem nada explicando. O raciocínio errado é sempre "a requisição
+    falhou, logo a sessão morreu" — celular sem sinal e API reiniciando não
+    dizem nada sobre a credencial. Só 401 e 403 encerram.
+84. **Corrigir um recurso no `instalar.sh` não alcança quem já está no ar.**
+    As chaves VAPID eram geradas só na instalação, então o push nunca funcionou
+    em servidor existente: o aviso aparecia no sininho e não chegava no
+    celular, sem erro nenhum. Recurso novo que precisa de valor no `.env`
+    precisa do mesmo passo nos DOIS scripts.
+85. **Valor gravado no `.env` manda sobre o padrão do código.** Mudar
+    `access_token_ttl_minutes` no Python não mudou nada para quem tinha
+    `ACCESS_TOKEN_TTL_MINUTES=30` no arquivo. Ajuste de padrão que precisa
+    valer para instalação existente vai junto com um `sed` no `atualizar.sh`,
+    condicionado ao valor antigo exato — quem escolheu outro número escolheu.
+86. **Token de acesso curto multiplica as chances de a sessão cair.** Trinta
+    minutos obrigavam uma renovação em toda abertura do aplicativo, e cada
+    renovação é uma rotação que pode se perder. O prazo do acesso não é a
+    defesa contra roubo — a defesa é a rotação do refresh com derrubada de
+    família.

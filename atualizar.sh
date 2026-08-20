@@ -14,14 +14,18 @@ readonly RAIZ
 readonly COMPOSE="docker compose -f $RAIZ/docker-compose.prod.yml"
 
 if [[ -t 1 ]]; then
-    readonly VERDE=$'\033[0;32m' VERMELHO=$'\033[0;31m' FORTE=$'\033[1m' FIM=$'\033[0m'
+    readonly VERDE=$'\033[0;32m' VERMELHO=$'\033[0;31m' AMARELO=$'\033[0;33m'
+    readonly FORTE=$'\033[1m' FIM=$'\033[0m'
 else
-    readonly VERDE='' VERMELHO='' FORTE='' FIM=''
+    readonly VERDE='' VERMELHO='' AMARELO='' FORTE='' FIM=''
 fi
 
 ok()    { printf '  %s✓%s %s\n' "$VERDE" "$FIM" "$1"; }
 erro()  { printf '\n  %s✗ %s%s\n\n' "$VERMELHO" "$1" "$FIM" >&2; exit 1; }
 etapa() { printf '\n%s%s%s\n' "$FORTE" "$1" "$FIM"; }
+# Nem tudo que dá errado justifica parar a atualização: o que só degrada um
+# recurso opcional avisa e segue.
+aviso() { printf '  %s!%s %s\n' "$AMARELO" "$FIM" "$1"; }
 
 [[ $EUID -eq 0 ]] || erro "rode com sudo: sudo ./atualizar.sh"
 [[ -f "$RAIZ/.env" ]] || erro "não achei o .env — rode ./instalar.sh primeiro"
@@ -47,6 +51,47 @@ etapa "2. Reconstruindo"
 $COMPOSE build --pull >/tmp/bolao-update.log 2>&1 \
     || { tail -30 /tmp/bolao-update.log; erro "construção falhou (log em /tmp/bolao-update.log)"; }
 ok "imagens atualizadas"
+
+# --- ajustes no .env de quem já estava no ar --------------------------------
+#
+# O `.env` não é reescrito por este script — e não deve ser, porque guarda
+# escolhas do operador. Mas alguns valores gravados por instalações antigas
+# quebram recursos novos, e deixá-los como estão faria a atualização parecer
+# não ter funcionado.
+
+# Trinta minutos obrigavam uma renovação de token em TODA abertura do
+# aplicativo, e cada renovação é uma chance de a sessão cair. O valor do .env
+# manda sobre o padrão do código, então trocar só o código não bastaria.
+#
+# A troca só acontece se o valor for exatamente o padrão antigo: quem escolheu
+# outro número escolheu de propósito.
+if grep -q '^ACCESS_TOKEN_TTL_MINUTES=30$' "$RAIZ/.env"; then
+    sed -i 's/^ACCESS_TOKEN_TTL_MINUTES=30$/ACCESS_TOKEN_TTL_MINUTES=720/' "$RAIZ/.env"
+    ok "validade do token de acesso ajustada (o app deixa de renovar a cada abertura)"
+fi
+
+# Sem chave VAPID o canal de push nem é construído: o lembrete aparece no
+# sininho e nunca chega no celular, sem erro em log nenhum. Gerar aqui também —
+# e não só no instalador — é o que faz o recurso valer para quem já tinha a
+# plataforma no ar.
+#
+# Preservada quando já existe: trocá-la invalidaria toda inscrição feita, e cada
+# pessoa teria de autorizar de novo.
+if ! grep -q '^VAPID_PRIVATE_KEY=.' "$RAIZ/.env"; then
+    if chaves_vapid="$($COMPOSE run --rm --no-deps api python -m app.cli gerar-vapid 2>/dev/null)" \
+        && [[ "$chaves_vapid" == *VAPID_PUBLIC_KEY=* ]]; then
+        acme="$(sed -n 's/^BOLAO_ACME_EMAIL=//p' "$RAIZ/.env" | head -1)"
+        {
+            echo
+            echo "# --- Notificação do navegador (Web Push) ---------------------------------"
+            printf '%s\n' "$chaves_vapid"
+            echo "VAPID_SUBJECT=mailto:${acme:-admin@localhost}"
+        } >> "$RAIZ/.env"
+        ok "chaves de notificação geradas (o aviso passa a chegar no celular)"
+    else
+        aviso "não consegui gerar as chaves de notificação; os avisos ficam só na plataforma"
+    fi
+fi
 
 # O Caddyfile é conferido ANTES de recriar a borda.
 #
